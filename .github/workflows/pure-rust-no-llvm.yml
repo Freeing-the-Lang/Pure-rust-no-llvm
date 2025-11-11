@@ -1,0 +1,87 @@
+name: "🏗️ Pure-Rust-No-LLVM — Rust→C++→NASM Build & ProofLedger Release"
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [ closed ]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"  # 매일 새벽 3시 자동 빌드
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pure-rust-no-llvm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-chain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "🧭 Checkout Repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "⚙️ Setup Environment"
+        run: |
+          sudo apt update
+          sudo apt install -y python3 g++ nasm
+
+      - name: "🔧 Make Scripts Executable"
+        run: chmod +x build_to_nasm.sh
+
+      - name: "🚀 Run Full Chain Build"
+        run: ./build_to_nasm.sh
+
+      - name: "🪶 Generate ProofLedger"
+        run: |
+          sha256sum out.cpp out.asm out > proofledger.txt
+          echo "Generated on $(date -u)" >> proofledger.txt
+          echo "Commit: $GITHUB_SHA" >> proofledger.txt
+          echo "✅ ProofLedger created."
+          cat proofledger.txt
+
+      - name: "🧾 Commit & Push ProofLedger"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add proofledger.txt
+          git commit -m "🪶 Update ProofLedger ($(date -u +'%Y-%m-%d %H:%M:%S'))" || echo "No changes"
+          git push
+
+      - name: "📦 Upload Artifacts"
+        uses: actions/upload-artifact@v4
+        with:
+          name: "pure-rust-no-llvm-artifacts"
+          path: |
+            out.cpp
+            out.asm
+            out
+            proofledger.txt
+          if-no-files-found: ignore
+
+      - name: "🏷️ Auto Release"
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }}"
+          body: |
+            🧩 **Pure-Rust-No-LLVM** Full Build Chain Result  
+            - Rust → C++ → NASM → Binary  
+            - Auto ProofLedger Generated  
+            - SHA256 Verified Build Chain  
+
+            Commit: ${{ github.sha }}
+          files: |
+            out
+            out.cpp
+            out.asm
+            proofledger.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
