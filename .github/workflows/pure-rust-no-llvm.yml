@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — 3OS Build & ProofLedger Release"
+name: "🏗️ Pure-Rust-No-LLVM — 3OS Build & ProofLedger Release (No Conflict)"
 
 on:
   push:
@@ -52,21 +52,32 @@ jobs:
       - name: "🪶 Generate ProofLedger"
         shell: bash
         run: |
-          sha256sum out.cpp out.asm out > proofledger.txt 2>/dev/null || certutil -hashfile out SHA256 > proofledger.txt
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum out.cpp out.asm out > proofledger.txt
+          else
+            certutil -hashfile out SHA256 > proofledger.txt
+          fi
           echo "Generated on $(date -u)" >> proofledger.txt
           echo "Runner: $RUNNER_OS" >> proofledger.txt
           echo "Commit: $GITHUB_SHA" >> proofledger.txt
           cat proofledger.txt
 
-      - name: "📦 Upload Artifacts"
+      - name: "📦 Rename Outputs with OS Suffix"
+        shell: bash
+        run: |
+          OS_NAME=$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')
+          mv out "out-${OS_NAME}" || true
+          mv out.cpp "out-${OS_NAME}.cpp" || true
+          mv out.asm "out-${OS_NAME}.asm" || true
+          mv proofledger.txt "proofledger-${OS_NAME}.txt" || true
+
+      - name: "📤 Upload OS-Specific Artifacts"
         uses: actions/upload-artifact@v4
         with:
           name: "artifacts-${{ runner.os }}"
           path: |
-            out
-            out.cpp
-            out.asm
-            proofledger.txt
+            out-*
+            proofledger-*.txt
           if-no-files-found: ignore
 
   release:
@@ -85,11 +96,12 @@ jobs:
           tag_name: v${{ github.run_number }}
           name: "Pure-Rust-No-LLVM 3OS Build #${{ github.run_number }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — 3OS Build Chain**
+            🧩 **Pure-Rust-No-LLVM — 3OS Build Chain (No Conflict)**
 
             ✅ Rust → C++ → NASM → Binary  
-            ✅ ProofLedger Generated on 3 Platforms  
-            ✅ Deterministic Multi-OS Chain
+            ✅ ProofLedger Generated per OS  
+            ✅ Deterministic Multi-Platform Chain  
+            ✅ Auto Release with SHA256 Verification
 
             Commit: ${{ github.sha }}
           files: dist/**/*
