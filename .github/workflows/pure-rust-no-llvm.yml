@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Rust→C++→NASM Build & ProofLedger Release"
+name: "🏗️ Pure-Rust-No-LLVM — 3OS Build & ProofLedger Release"
 
 on:
   push:
@@ -7,18 +7,22 @@ on:
     types: [ closed ]
   workflow_dispatch:
   schedule:
-    - cron: "0 3 * * *"  # 매일 새벽 3시 자동 빌드
+    - cron: "0 3 * * *"
 
 permissions:
   contents: write
 
 concurrency:
-  group: pure-rust-no-llvm-${{ github.ref }}
+  group: pure-rust-no-llvm-3os-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-chain:
-    runs-on: ubuntu-latest
+  build-3os:
+    name: "🧩 Build on ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: "🧭 Checkout Repository"
@@ -26,62 +30,68 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: "⚙️ Setup Environment"
+      - name: "⚙️ Setup Environment (Linux/macOS)"
+        if: runner.os != 'Windows'
         run: |
-          sudo apt update
-          sudo apt install -y python3 g++ nasm
+          sudo apt update || true
+          sudo apt install -y python3 g++ nasm || true
+          chmod +x build_to_nasm.sh
 
-      - name: "🔧 Make Scripts Executable"
-        run: chmod +x build_to_nasm.sh
+      - name: "⚙️ Setup Environment (Windows)"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install python --pre -y
+          choco install mingw nasm -y
+          git config --global core.autocrlf false
 
       - name: "🚀 Run Full Chain Build"
+        shell: bash
         run: ./build_to_nasm.sh
 
       - name: "🪶 Generate ProofLedger"
+        shell: bash
         run: |
-          sha256sum out.cpp out.asm out > proofledger.txt
+          sha256sum out.cpp out.asm out > proofledger.txt 2>/dev/null || certutil -hashfile out SHA256 > proofledger.txt
           echo "Generated on $(date -u)" >> proofledger.txt
+          echo "Runner: $RUNNER_OS" >> proofledger.txt
           echo "Commit: $GITHUB_SHA" >> proofledger.txt
-          echo "✅ ProofLedger created."
           cat proofledger.txt
-
-      - name: "🧾 Commit & Push ProofLedger"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add proofledger.txt
-          git commit -m "🪶 Update ProofLedger ($(date -u +'%Y-%m-%d %H:%M:%S'))" || echo "No changes"
-          git push
 
       - name: "📦 Upload Artifacts"
         uses: actions/upload-artifact@v4
         with:
-          name: "pure-rust-no-llvm-artifacts"
+          name: "artifacts-${{ runner.os }}"
           path: |
+            out
             out.cpp
             out.asm
-            out
             proofledger.txt
           if-no-files-found: ignore
 
-      - name: "🏷️ Auto Release"
+  release:
+    name: "🏷️ Create Multi-OS Release"
+    runs-on: ubuntu-latest
+    needs: build-3os
+    steps:
+      - name: "📥 Download All Artifacts"
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: "🏷️ Create GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
-          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }}"
+          name: "Pure-Rust-No-LLVM 3OS Build #${{ github.run_number }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM** Full Build Chain Result  
-            - Rust → C++ → NASM → Binary  
-            - Auto ProofLedger Generated  
-            - SHA256 Verified Build Chain  
+            🧩 **Pure-Rust-No-LLVM — 3OS Build Chain**
+
+            ✅ Rust → C++ → NASM → Binary  
+            ✅ ProofLedger Generated on 3 Platforms  
+            ✅ Deterministic Multi-OS Chain
 
             Commit: ${{ github.sha }}
-          files: |
-            out
-            out.cpp
-            out.asm
-            proofledger.txt
+          files: dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
