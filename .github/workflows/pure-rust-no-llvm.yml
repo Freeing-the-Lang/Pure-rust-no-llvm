@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — vFinal (Cancel-Proof Edition)"
+name: "🏗️ Pure-Rust-No-LLVM — Smart Verified Release Edition (Cancel-Proof + Unique Tag)"
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false   # ✅ 중복 빌드 허용 (취소 방지)
+  cancel-in-progress: false   # ✅ 중복 빌드 허용, 취소 방지
 
 jobs:
   build-3os:
@@ -23,7 +23,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-      max-parallel: 1          # ✅ 순차 빌드로 cancel 회피
+      max-parallel: 1   # ✅ 순차 실행 (cancel 방지)
 
     timeout-minutes: 60
 
@@ -40,7 +40,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          echo "⚙️ Preparing $RUNNER_OS build environment..."
+          echo "⚙️ Preparing $RUNNER_OS environment..."
           sudo apt update || true
           sudo apt install -y python3 g++ nasm || true
           chmod +x build_to_nasm.sh
@@ -49,7 +49,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          echo "⚙️ Preparing Windows build environment (cancel-proof)..."
+          echo "⚙️ Preparing Windows build environment (light)..."
           python --version
           g++ --version
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
@@ -75,7 +75,7 @@ jobs:
       - name: "⚙️ Compile C++ → NASM"
         shell: bash
         run: |
-          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ assembly warning"
+          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM generation warning"
           ls -l out.asm || echo "⚠️ out.asm missing"
 
       - name: "🏗️ Assemble NASM → Executable"
@@ -101,7 +101,6 @@ jobs:
           echo "🧾 Generating ProofLedger..."
           mkdir -p output
           cd output
-          # ⚙️ 자동 복구
           if [ -z "$(ls -A . 2>/dev/null)" ]; then
             echo "⚙️ No files in output/, checking parent..."
             cp -v ../out* . 2>/dev/null || true
@@ -140,7 +139,7 @@ jobs:
           else
             echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
-          echo "⏳ Sleeping 15s to prevent runner cancel..."
+          echo "⏳ Waiting 15s for runner flush..."
           sleep 15
           cat proofledger.txt
 
@@ -154,8 +153,11 @@ jobs:
           path: output/
           if-no-files-found: warn
 
+  # ───────────────────────────────
+  # Release (Smart Safe Version)
+  # ───────────────────────────────
   release:
-    name: "🏷️ Verified Multi-OS Release"
+    name: "🏷️ Verified Multi-OS Smart Release"
     runs-on: ubuntu-latest
     needs: build-3os
     steps:
@@ -164,23 +166,27 @@ jobs:
         with:
           path: dist
 
-      - name: "🏷️ Create GitHub Release"
+      - name: "🏷️ Create Unique GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}-${{ github.ref_name }}
+          tag_name: v${{ github.run_number }}-${{ github.ref_name }}-${{ github.run_id }}   # ✅ 고유 태그 (충돌 방지)
           name: "Pure-Rust-No-LLVM Verified Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — Cancel-Proof Verified Chain**
+            🧩 **Pure-Rust-No-LLVM — Smart Verified Chain (Cancel-Proof)**
 
             ✅ Rust → C++ → NASM → Executable  
-            ✅ LLVM-Free Build (No Rust Toolchain)  
-            ✅ ProofLedger with SHA256 Verification  
-            ✅ 3OS Sequential Stable Execution  
-            ✅ Cancel-Proof: No premature runner termination  
-            ✅ Auto Release Upload  
+            ✅ LLVM-Free (No Rust Toolchain)  
+            ✅ ProofLedger with SHA256 Validation  
+            ✅ Auto Recovery & Verification  
+            ✅ Sequential 3OS Execution (No Cancellation)  
+            ✅ Unique Tagging — No GitHub Asset Collision  
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
-          files: dist/**
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: |
+            dist/**/*.asm
+            dist/**/*.cpp
+            dist/**/*.txt
+            dist/**/out*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
