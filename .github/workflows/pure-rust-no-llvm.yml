@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Smart Verified Release (Unique Assets + Cancel-Proof)"
+name: "🏗️ Pure-Rust-No-LLVM — Smart Verified Release (Executable Fix + Unique Assets)"
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
       max-parallel: 1
     timeout-minutes: 60
 
@@ -162,6 +162,12 @@ jobs:
         run: |
           set -e
           mkdir -p dist_flat
+          # 🔁 복구: 빌드 산출물이 dist에 없으면 output에서 복사
+          if [ ! -d "dist" ] || [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "⚙️ Recovering from output/"
+            mkdir -p dist
+            cp -rv output/* dist/ || true
+          fi
           idx=0
           while IFS= read -r -d '' p; do
             b=$(basename "$p")
@@ -171,7 +177,7 @@ jobs:
             else
               cp -v "$p" "dist_flat/$b"
             fi
-          done < <(find dist -type f -print0)
+          done < <(find dist -type f \( -name "out*" -o -name "*.asm" -o -name "*.cpp" -o -name "*.txt" \) -print0)
           echo "---- FINAL FILES ----"
           ls -lh dist_flat
 
@@ -181,7 +187,7 @@ jobs:
           tag_name: v${{ github.run_number }}-${{ github.ref_name }}-${{ github.run_id }}
           name: "Pure-Rust-No-LLVM Verified Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — Smart Verified Chain (Cancel-Proof)**
+            🧩 **Pure-Rust-No-LLVM — Smart Verified Chain (Executable Release)**
 
             ✅ Rust → C++ → NASM → Executable  
             ✅ LLVM-Free (No Rust Toolchain)  
