@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false   # ✅ 중복 빌드 허용, 취소 방지
+  cancel-in-progress: false
 
 jobs:
   build-3os:
@@ -22,9 +22,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-      max-parallel: 1   # ✅ 순차 실행 (cancel 방지)
-
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+      max-parallel: 1
     timeout-minutes: 60
 
     steps:
@@ -37,7 +36,6 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          echo "⚙️ Preparing $RUNNER_OS environment..."
           sudo apt update || true
           sudo apt install -y python3 g++ nasm || true
           chmod +x build_to_nasm.sh
@@ -46,7 +44,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          echo "⚙️ Preparing Windows build environment (light)..."
           python --version
           g++ --version
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
@@ -83,33 +80,30 @@ jobs:
             nasm -f elf64 out.asm -o out.o || true
             g++ out.o -o output/out || true
           fi
-          echo "✅ Build complete for $RUNNER_OS"
           ls -lh output || true
 
       - name: "🧾 Generate ProofLedger"
         shell: bash
         run: |
-          echo "🧾 Generating ProofLedger..."
           mkdir -p output
           cd output
           if [ -z "$(ls -A . 2>/dev/null)" ]; then
-            echo "⚙️ No files in output/, checking parent..."
             cp -v ../out* . 2>/dev/null || true
             cp -v ../*.asm . 2>/dev/null || true
             cp -v ../*.exe . 2>/dev/null || true
           fi
-          echo "📦 Files for ProofLedger:"
-          ls -lh || echo "⚠️ Empty dir!"
           if ls * >/dev/null 2>&1; then
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum * > proofledger.txt
             else
               certutil -hashfile out.exe SHA256 > proofledger.txt
             fi
-            echo "Generated on $(date -u)" >> proofledger.txt
-            echo "Runner: $RUNNER_OS" >> proofledger.txt
-            echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
-            echo "Commit: $GITHUB_SHA" >> proofledger.txt
+            {
+              echo "Generated on $(date -u)"
+              echo "Runner: $RUNNER_OS"
+              echo "Branch: $GITHUB_REF_NAME"
+              echo "Commit: $GITHUB_SHA"
+            } >> proofledger.txt
           else
             echo "❌ No artifacts found" > proofledger.txt
           fi
@@ -118,7 +112,6 @@ jobs:
         shell: bash
         run: |
           cd output
-          echo "🔍 Verifying ProofLedger..."
           if ls out* >/dev/null 2>&1; then
             calc=$(sha256sum out* | head -n1 | awk '{print $1}')
             ledger=$(grep -m1 -Eo '^[0-9a-f]{64}' proofledger.txt | head -n1)
@@ -130,7 +123,6 @@ jobs:
           else
             echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
-          echo "⏳ Waiting 15s for runner flush..."
           sleep 15
           cat proofledger.txt
 
@@ -174,5 +166,5 @@ jobs:
             dist/**/*.cpp
             dist/**/*.txt
             dist/**/out*
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
