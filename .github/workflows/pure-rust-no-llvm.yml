@@ -2,7 +2,7 @@ name: "🏗️ Pure-Rust-No-LLVM — 3OS Build & ProofLedger Release (Branch-Awa
 
 on:
   push:
-    branches: [ "*" ]
+    branches: [ "*" ]  # 모든 브랜치 자동 실행
   pull_request:
     types: [ opened, reopened, synchronize, closed ]
   workflow_dispatch:
@@ -30,19 +30,29 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Linux & macOS
       - name: "⚙️ Setup Environment (Linux/macOS)"
         if: runner.os != 'Windows'
+        shell: bash
         run: |
+          echo "⚙️ Installing toolchain for $RUNNER_OS..."
           sudo apt update || true
           sudo apt install -y python3 g++ nasm || true
           chmod +x build_to_nasm.sh
 
+      # Windows
       - name: "⚙️ Setup Environment (Windows)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install python --pre -y
-          choco install mingw nasm -y
+          echo "⚙️ Preparing Windows build environment..."
+          choco upgrade chocolatey -y
+          choco install python -y --no-progress
+          choco install mingw -y --no-progress
+          choco install nasm -y --no-progress
+          python --version
+          g++ --version
+          nasm -v
           git config --global core.autocrlf false
 
       - name: "🚀 Run Full Chain Build"
@@ -89,6 +99,7 @@ jobs:
           for f in out out.o out.obj out.exe out.asm out.cpp proofledger.txt; do
             [ -f "$f" ] && mv "$f" "dist/${f%.*}-${OS_NAME}-${BRANCH_NAME}.${f##*.}" || true
           done
+          ls -al dist
 
       - name: "📤 Upload OS+Branch Artifacts"
         uses: actions/upload-artifact@v4
@@ -101,7 +112,6 @@ jobs:
     name: "🏷️ Create Multi-OS Release (Branch-Aware)"
     runs-on: ubuntu-latest
     needs: build-3os
-
     steps:
       - name: "📥 Download All Artifacts"
         uses: actions/download-artifact@v4
@@ -114,7 +124,7 @@ jobs:
           tag_name: v${{ github.run_number }}-${{ github.ref_name }}
           name: "Pure-Rust-No-LLVM 3OS Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — 3OS Build Chain (Branch Aware)**
+            🧩 **Pure-Rust-No-LLVM — 3OS Build Chain (Branch-Aware)**
 
             ✅ Rust → C++ → NASM → Executable  
             ✅ ProofLedger Generated per OS  
