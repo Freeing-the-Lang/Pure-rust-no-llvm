@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Smart Verified Release Edition (Cancel-Proof + Unique Tag)"
+name: "🏗️ Pure-Rust-No-LLVM — Smart Verified Release (Unique Assets + Cancel-Proof)"
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ubuntu-latest, macos-latest, windows-latest]
       max-parallel: 1
     timeout-minutes: 60
 
@@ -82,16 +82,29 @@ jobs:
           fi
           ls -lh output || true
 
+      - name: "📛 Unify Filenames (OS + Branch)"
+        shell: bash
+        run: |
+          OS=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          BR=$(echo "$GITHUB_REF_NAME" | tr '/[:upper:]' '-[:lower:]')
+          cd output || exit 0
+          for f in out out.exe out.o out.obj out.asm out.cpp proofledger.txt; do
+            [ -f "$f" ] || continue
+            base="${f%.*}"
+            ext="${f##*.}"
+            if [ "$f" = "$base" ]; then
+              mv -v "$f" "${base}-${OS}-${BR}"
+            else
+              mv -v "$f" "${base}-${OS}-${BR}.${ext}"
+            fi
+          done
+          ls -lh
+
       - name: "🧾 Generate ProofLedger"
         shell: bash
         run: |
           mkdir -p output
           cd output
-          if [ -z "$(ls -A . 2>/dev/null)" ]; then
-            cp -v ../out* . 2>/dev/null || true
-            cp -v ../*.asm . 2>/dev/null || true
-            cp -v ../*.exe . 2>/dev/null || true
-          fi
           if ls * >/dev/null 2>&1; then
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum * > proofledger.txt
@@ -123,7 +136,7 @@ jobs:
           else
             echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
-          sleep 15
+          sleep 10
           cat proofledger.txt
 
       - name: "📦 Upload Outputs"
@@ -144,6 +157,24 @@ jobs:
         with:
           path: dist
 
+      - name: "🧹 Flatten & Deduplicate for Release"
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist_flat
+          idx=0
+          while IFS= read -r -d '' p; do
+            b=$(basename "$p")
+            if [ -e "dist_flat/$b" ]; then
+              idx=$((idx+1))
+              cp -v "$p" "dist_flat/${idx}-${b}"
+            else
+              cp -v "$p" "dist_flat/$b"
+            fi
+          done < <(find dist -type f -print0)
+          echo "---- FINAL FILES ----"
+          ls -lh dist_flat
+
       - name: "🏷️ Create Unique GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
@@ -161,10 +192,6 @@ jobs:
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
-          files: |
-            dist/**/*.asm
-            dist/**/*.cpp
-            dist/**/*.txt
-            dist/**/out*
+          files: dist_flat/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
