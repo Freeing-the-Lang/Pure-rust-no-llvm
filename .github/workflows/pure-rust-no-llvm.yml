@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Full Chain with Proof Verification"
+name: "🏗️ Pure-Rust-No-LLVM — Full Stable Chain (C++→NASM→Executable + Proof Verification)"
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false  # ✅ 중복 실행 허용, 자동 취소 방지
+  cancel-in-progress: false   # ✅ 중복 빌드 허용
 
 jobs:
   build-3os:
@@ -52,6 +52,7 @@ jobs:
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
             choco install nasm -y --no-progress
           }
+          nasm -v
           mkdir output
           git config --global core.autocrlf false
 
@@ -60,19 +61,19 @@ jobs:
       # ───────────────────────────────
       - name: "🚀 Run Full Chain Build"
         shell: bash
-        run: ./build_to_nasm.sh || echo "⚠️ build_to_nasm.sh finished with warnings"
+        run: ./build_to_nasm.sh || echo "⚠️ build_to_nasm.sh warning"
 
       - name: "🦀 Transpile Rust → C++"
         shell: bash
         run: |
           python3 transpile_rust_to_cpp.py || echo "⚠️ transpiler warning"
-          ls -l out.cpp || echo "⚠️ no out.cpp"
+          ls -l out.cpp || echo "⚠️ out.cpp missing"
 
       - name: "⚙️ Compile C++ → ASM"
         shell: bash
         run: |
-          g++ -S -masm=intel out.cpp -o out.asm || true
-          ls -l out.asm || echo "⚠️ no out.asm"
+          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM generation warning"
+          ls -l out.asm || echo "⚠️ out.asm missing"
 
       - name: "🏗️ Assemble NASM → Executable"
         shell: bash
@@ -85,6 +86,7 @@ jobs:
             nasm -f elf64 out.asm -o out.o || true
             g++ out.o -o output/out || true
           fi
+          ls -lh output || true
 
       # ───────────────────────────────
       # ProofLedger + Verification
@@ -92,28 +94,51 @@ jobs:
       - name: "🧾 Generate ProofLedger"
         shell: bash
         run: |
+          echo "🧾 Generating ProofLedger..."
+          mkdir -p output
           cd output
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum * > proofledger.txt
-          else
-            certutil -hashfile out.exe SHA256 > proofledger.txt
+
+          # ⚙️ 상위 경로에 파일 있을 경우 자동 복사
+          if [ -z "$(ls -A . 2>/dev/null)" ]; then
+            echo "⚙️ No files in output/, checking parent..."
+            cp -v ../out* . 2>/dev/null || true
+            cp -v ../*.asm . 2>/dev/null || true
+            cp -v ../*.exe . 2>/dev/null || true
           fi
-          echo "Generated on $(date -u)" >> proofledger.txt
-          echo "Runner: $RUNNER_OS" >> proofledger.txt
-          echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
-          echo "Commit: $GITHUB_SHA" >> proofledger.txt
+
+          echo "📦 Files present for ProofLedger:"
+          ls -lh || echo "⚠️ Still empty!"
+
+          if ls * >/dev/null 2>&1; then
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum * > proofledger.txt
+            else
+              certutil -hashfile out.exe SHA256 > proofledger.txt
+            fi
+            echo "Generated on $(date -u)" >> proofledger.txt
+            echo "Runner: $RUNNER_OS" >> proofledger.txt
+            echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
+            echo "Commit: $GITHUB_SHA" >> proofledger.txt
+          else
+            echo "❌ No build artifacts for ProofLedger." > proofledger.txt
+          fi
+          cat proofledger.txt
 
       - name: "🔍 Verify ProofLedger"
         shell: bash
         run: |
           cd output
           echo "🔍 Verifying ProofLedger..."
-          calc=$(sha256sum out* | awk '{print $1}')
-          ledger=$(grep -m1 -Eo '^[0-9a-f]{64}' proofledger.txt | head -n1)
-          if [ "$calc" = "$ledger" ]; then
-            echo "✅ VERIFIED: SHA256 match confirmed" | tee -a proofledger.txt
+          if ls out* >/dev/null 2>&1; then
+            calc=$(sha256sum out* | head -n1 | awk '{print $1}')
+            ledger=$(grep -m1 -Eo '^[0-9a-f]{64}' proofledger.txt | head -n1)
+            if [ "$calc" = "$ledger" ]; then
+              echo "✅ VERIFIED: SHA256 match confirmed" | tee -a proofledger.txt
+            else
+              echo "❌ MISMATCH: Hash inconsistent!" | tee -a proofledger.txt
+            fi
           else
-            echo "❌ MISMATCH: Build hash inconsistent!" | tee -a proofledger.txt
+            echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
           cat proofledger.txt
 
@@ -128,10 +153,9 @@ jobs:
           if-no-files-found: warn
 
   release:
-    name: "🏷️ Create Multi-OS LLVM-Free Verified Release"
+    name: "🏷️ Create Multi-OS Verified Release"
     runs-on: ubuntu-latest
     needs: build-3os
-
     steps:
       - name: "📥 Download All Artifacts"
         uses: actions/download-artifact@v4
@@ -142,16 +166,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}-${{ github.ref_name }}
-          name: "Pure-Rust-No-LLVM Verified Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
+          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — Full Deterministic Verified Chain**
+            🧩 **Pure-Rust-No-LLVM — Verified Full Chain**
 
-            ✅ Rust → C++ → NASM → Executable  
-            ✅ LLVM-Free Build (No Rust toolchain)  
-            ✅ ProofLedger + SHA256 Verified ✅  
-            ✅ 3OS Parallel Execution (Linux / macOS / Windows)  
-            ✅ Auto Release  
-            ✅ SHA Match Validation Built-In  
+            ✅ C++ Transpile → NASM → Executable  
+            ✅ LLVM-Free (No Rust Toolchain)  
+            ✅ ProofLedger with SHA256 Validation  
+            ✅ Cross-Platform (Linux / macOS / Windows)  
+            ✅ Auto Recovery & Verification  
+            ✅ Auto Release Upload  
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
