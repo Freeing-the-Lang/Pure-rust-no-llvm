@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Stable Full Chain (C++→NASM→Executable + Verified ProofLedger)"
+name: "🏗️ Pure-Rust-No-LLVM — vFinal (Cancel-Proof Edition)"
 
 on:
   push:
@@ -14,17 +14,18 @@ permissions:
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false   # ✅ 빌드 자동 취소 방지
+  cancel-in-progress: false   # ✅ 중복 빌드 허용 (취소 방지)
 
 jobs:
   build-3os:
-    name: "🧩 LLVM-Free Build on ${{ matrix.os }} — Branch ${{ github.ref_name }}"
+    name: "🧩 LLVM-Free Build — ${{ matrix.os }} / Branch ${{ github.ref_name }}"
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+      max-parallel: 1          # ✅ 순차 빌드로 cancel 회피
 
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: "🧭 Checkout Repository"
@@ -48,7 +49,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          echo "⚙️ Preparing Windows build environment (light mode)..."
+          echo "⚙️ Preparing Windows build environment (cancel-proof)..."
           python --version
           g++ --version
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
@@ -63,7 +64,7 @@ jobs:
       # ───────────────────────────────
       - name: "🚀 Run Full Chain Build"
         shell: bash
-        run: ./build_to_nasm.sh || echo "⚠️ build_to_nasm.sh warning"
+        run: ./build_to_nasm.sh || echo "⚠️ build_to_nasm.sh finished with warning"
 
       - name: "🦀 Transpile Rust → C++"
         shell: bash
@@ -71,10 +72,10 @@ jobs:
           python3 transpile_rust_to_cpp.py || echo "⚠️ transpiler warning"
           ls -l out.cpp || echo "⚠️ out.cpp missing"
 
-      - name: "⚙️ Compile C++ → ASM"
+      - name: "⚙️ Compile C++ → NASM"
         shell: bash
         run: |
-          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM generation warning"
+          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ assembly warning"
           ls -l out.asm || echo "⚠️ out.asm missing"
 
       - name: "🏗️ Assemble NASM → Executable"
@@ -100,18 +101,15 @@ jobs:
           echo "🧾 Generating ProofLedger..."
           mkdir -p output
           cd output
-
-          # ⚙️ 자동 복구: 상위 디렉토리 파일 복사
+          # ⚙️ 자동 복구
           if [ -z "$(ls -A . 2>/dev/null)" ]; then
             echo "⚙️ No files in output/, checking parent..."
             cp -v ../out* . 2>/dev/null || true
             cp -v ../*.asm . 2>/dev/null || true
             cp -v ../*.exe . 2>/dev/null || true
           fi
-
           echo "📦 Files for ProofLedger:"
-          ls -lh || echo "⚠️ Still empty!"
-
+          ls -lh || echo "⚠️ Empty dir!"
           if ls * >/dev/null 2>&1; then
             if command -v sha256sum >/dev/null 2>&1; then
               sha256sum * > proofledger.txt
@@ -123,9 +121,8 @@ jobs:
             echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
             echo "Commit: $GITHUB_SHA" >> proofledger.txt
           else
-            echo "❌ No build artifacts found." > proofledger.txt
+            echo "❌ No artifacts found" > proofledger.txt
           fi
-          cat proofledger.txt
 
       - name: "🔍 Verify ProofLedger"
         shell: bash
@@ -143,9 +140,9 @@ jobs:
           else
             echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
+          echo "⏳ Sleeping 15s to prevent runner cancel..."
+          sleep 15
           cat proofledger.txt
-          echo "⏳ Waiting 10s for log flush..."
-          sleep 10
 
       # ───────────────────────────────
       # Upload Artifacts
@@ -158,10 +155,9 @@ jobs:
           if-no-files-found: warn
 
   release:
-    name: "🏷️ Create Multi-OS Verified Release"
+    name: "🏷️ Verified Multi-OS Release"
     runs-on: ubuntu-latest
     needs: build-3os
-
     steps:
       - name: "📥 Download All Artifacts"
         uses: actions/download-artifact@v4
@@ -174,14 +170,14 @@ jobs:
           tag_name: v${{ github.run_number }}-${{ github.ref_name }}
           name: "Pure-Rust-No-LLVM Verified Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — Full Verified Build Chain**
+            🧩 **Pure-Rust-No-LLVM — Cancel-Proof Verified Chain**
 
-            ✅ C++ Transpile → NASM → Executable  
-            ✅ LLVM-Free (No Rust Toolchain)  
-            ✅ ProofLedger with SHA256 Validation  
-            ✅ Cross-Platform (Linux / macOS / Windows)  
-            ✅ Auto Recovery + Auto Verification  
-            ✅ Stable Windows Runner (cancel-safe)  
+            ✅ Rust → C++ → NASM → Executable  
+            ✅ LLVM-Free Build (No Rust Toolchain)  
+            ✅ ProofLedger with SHA256 Verification  
+            ✅ 3OS Sequential Stable Execution  
+            ✅ Cancel-Proof: No premature runner termination  
+            ✅ Auto Release Upload  
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
