@@ -1,4 +1,4 @@
-name: "🏗️ Pure-Rust-No-LLVM — Full Stable Chain (C++→NASM→Executable + Proof Verification)"
+name: "🏗️ Pure-Rust-No-LLVM — Stable Full Chain (C++→NASM→Executable + Verified ProofLedger)"
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false   # ✅ 중복 빌드 허용
+  cancel-in-progress: false   # ✅ 빌드 자동 취소 방지
 
 jobs:
   build-3os:
@@ -39,6 +39,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          echo "⚙️ Preparing $RUNNER_OS build environment..."
           sudo apt update || true
           sudo apt install -y python3 g++ nasm || true
           chmod +x build_to_nasm.sh
@@ -47,6 +48,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          echo "⚙️ Preparing Windows build environment (light mode)..."
           python --version
           g++ --version
           if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
@@ -86,6 +88,7 @@ jobs:
             nasm -f elf64 out.asm -o out.o || true
             g++ out.o -o output/out || true
           fi
+          echo "✅ Build complete for $RUNNER_OS"
           ls -lh output || true
 
       # ───────────────────────────────
@@ -98,7 +101,7 @@ jobs:
           mkdir -p output
           cd output
 
-          # ⚙️ 상위 경로에 파일 있을 경우 자동 복사
+          # ⚙️ 자동 복구: 상위 디렉토리 파일 복사
           if [ -z "$(ls -A . 2>/dev/null)" ]; then
             echo "⚙️ No files in output/, checking parent..."
             cp -v ../out* . 2>/dev/null || true
@@ -106,7 +109,7 @@ jobs:
             cp -v ../*.exe . 2>/dev/null || true
           fi
 
-          echo "📦 Files present for ProofLedger:"
+          echo "📦 Files for ProofLedger:"
           ls -lh || echo "⚠️ Still empty!"
 
           if ls * >/dev/null 2>&1; then
@@ -120,7 +123,7 @@ jobs:
             echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
             echo "Commit: $GITHUB_SHA" >> proofledger.txt
           else
-            echo "❌ No build artifacts for ProofLedger." > proofledger.txt
+            echo "❌ No build artifacts found." > proofledger.txt
           fi
           cat proofledger.txt
 
@@ -141,9 +144,11 @@ jobs:
             echo "⚠️ No out* file found to verify." | tee -a proofledger.txt
           fi
           cat proofledger.txt
+          echo "⏳ Waiting 10s for log flush..."
+          sleep 10
 
       # ───────────────────────────────
-      # Upload
+      # Upload Artifacts
       # ───────────────────────────────
       - name: "📦 Upload Outputs"
         uses: actions/upload-artifact@v4
@@ -156,6 +161,7 @@ jobs:
     name: "🏷️ Create Multi-OS Verified Release"
     runs-on: ubuntu-latest
     needs: build-3os
+
     steps:
       - name: "📥 Download All Artifacts"
         uses: actions/download-artifact@v4
@@ -166,16 +172,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}-${{ github.ref_name }}
-          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
+          name: "Pure-Rust-No-LLVM Verified Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
-            🧩 **Pure-Rust-No-LLVM — Verified Full Chain**
+            🧩 **Pure-Rust-No-LLVM — Full Verified Build Chain**
 
             ✅ C++ Transpile → NASM → Executable  
             ✅ LLVM-Free (No Rust Toolchain)  
             ✅ ProofLedger with SHA256 Validation  
             ✅ Cross-Platform (Linux / macOS / Windows)  
-            ✅ Auto Recovery & Verification  
-            ✅ Auto Release Upload  
+            ✅ Auto Recovery + Auto Verification  
+            ✅ Stable Windows Runner (cancel-safe)  
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
