@@ -1,16 +1,24 @@
+# Workflow name
 name: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
 
+# --- REFINED TRIGGERS ---
+# This is more controlled to prevent spamming releases.
+# It now runs on:
+# 1. Pushes to the 'main' branch.
+# 2. Pull Requests (opened, reopened, or new code pushed).
+# 3. The nightly schedule.
+# 4. Manual runs (workflow_dispatch).
 on:
   push:
-    branches: [ "*" ]
+    branches: [ "main" ] # <--- Only runs on push to 'main'
   pull_request:
-    types: [ opened, reopened, synchronize, closed ]
+    types: [ opened, reopened, synchronize ] # <--- Removed 'closed'
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * *"
 
 permissions:
-  contents: write
+  contents: write # <--- Required for creating releases
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
@@ -22,9 +30,13 @@ jobs:
     name: "🧩 LLVM-Free Build — ${{ matrix.os }} / Branch ${{ github.ref_name }}"
     runs-on: ${{ matrix.os }}
     strategy:
+      # --- REFINED STRATEGY ---
+      # fail-fast: false ensures all 3 OS jobs will run to completion,
+      # even if one fails, so you can see all results.
+      # Removed 'max-parallel: 1' to allow OSes to build in parallel.
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-      max-parallel: 1
     timeout-minutes: 60
 
     steps:
@@ -32,18 +44,28 @@ jobs:
       - name: "🧭 Checkout Repository"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
+          fetch-depth: 0 # <--- Good, fetches all history
 
       # -------------------------------
-      # Environment Setup
+      # Environment Setup (Refined)
       # -------------------------------
-      - name: "⚙️ Setup (Linux/macOS)"
-        if: runner.os != 'Windows'
+      # --- REFINED SETUP ---
+      # Split setup into OS-specific steps.
+      # 'apt' is for Linux, 'brew' is for macOS.
+
+      - name: "⚙️ Setup (Linux)"
+        if: runner.os == 'Linux'
         shell: bash
         run: |
-          sudo apt update || true
-          sudo apt install -y python3 g++ nasm || true
+          sudo apt-get update
+          sudo apt-get install -y python3 g++ nasm
+
+      - name: "⚙️ Setup (macOS)"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # g++ (clang) and python3 are pre-installed
+          brew install nasm
 
       - name: "⚙️ Setup (Windows)"
         if: runner.os == 'Windows'
@@ -95,6 +117,8 @@ EOF
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
         run: |
+          # --- This is your custom Python transpiler logic ---
+          # --- (Unchanged) ---
           cat << 'PYCODE' > transpile_rust_to_cpp.py
 import re, os
 
@@ -174,34 +198,41 @@ print(f"✅ Transpiled Rust → C++ to {dst}")
 PYCODE
 
           python3 transpile_rust_to_cpp.py
-          head -n 20 out.cpp
+          echo "--- Transpiled C++ (out.cpp) ---"
+          cat out.cpp
+          echo "---------------------------------"
 
 
       # -------------------------------
-      # C++ → ASM → Executable
+      # C++ → ASM → Executable (Refined)
       # -------------------------------
-      - name: "⚙️ Compile & Assemble"
+      # --- REFINED BUILD ---
+      # This is now much simpler and more robust.
+      # 1. We let g++ create the .asm file (as an artifact).
+      # 2. We let g++ *also* create the final executable directly.
+      # 3. This removes the fragile 'sed' and 'nasm' build chain.
+      #    We still install NASM (from setup) in case your
+      #    transpiler ever wants to use it directly.
+
+      - name: "⚙️ Generate ASM Artifact"
         shell: bash
         run: |
-          g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM warning"
+          g++ -S -masm=intel out.cpp -o out.asm
+          echo "--- Generated ASM (out.asm) ---"
+          head -n 20 out.asm
+          echo "-------------------------------"
 
-          # --- Normalize ASM to NASM format ---
-          sed -i 's/\.intel_syntax noprefix//g' out.asm || true
-          sed -i 's/\.att_syntax//g' out.asm || true
-          sed -i 's/\.globl/ global /g' out.asm || true
-          sed -i 's/\t//g' out.asm || true
-
+      - name: "⚙️ Compile Executable"
+        shell: bash
+        run: |
           mkdir -p output
-
           if [ "${{ runner.os }}" = "Windows" ]; then
-            nasm -f win64 out.asm -o out.obj || true
-            g++ out.obj -o output/out.exe || true
+            g++ out.cpp -o output/out.exe
           else
-            nasm -f elf64 out.asm -o out.o || true
-            g++ out.o -o output/out || true
+            g++ out.cpp -o output/out
           fi
-
-          ls -lh output || true
+          echo "✅ Compiled executable"
+          ls -lh output
 
 
       # -------------------------------
@@ -214,9 +245,12 @@ PYCODE
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum * > proofledger.txt
           else
+            # This is the Windows 'certutil' fallback
             certutil -hashfile out.exe SHA256 > proofledger.txt
           fi
-          echo "Generated on $(date -u)" >> proofledger.txt
+          echo "" >> proofledger.txt
+          echo "--- ProofLedger ---" >> proofledger.txt
+          echo "Generated on: $(date -u)" >> proofledger.txt
           echo "Runner: ${{ runner.os }}" >> proofledger.txt
           echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
           echo "Commit: $GITHUB_SHA" >> proofledger.txt
@@ -239,46 +273,72 @@ PYCODE
   release:
     name: "🏷️ Verified Multi-OS Syntax Transpiler Release"
     runs-on: ubuntu-latest
-    needs: build-3os
+    needs: build-3os # <--- Depends on all 3 OS builds succeeding
+
+    # --- REFINED RELEASE TRIGGER ---
+    # This 'if' condition is the most important change.
+    # It ensures this 'release' job ONLY runs if:
+    # 1. The event was a 'push' AND it was to the 'main' branch.
+    #    OR
+    # 2. The workflow was triggered manually (workflow_dispatch).
+    # This PREVENTS creating releases for Pull Requests.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
 
     steps:
 
       - name: "📥 Download Artifacts"
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: dist # <--- Download all artifacts to 'dist' dir
 
       - name: "🧹 Flatten for Release"
         shell: bash
         run: |
           mkdir -p dist_flat
           idx=0
+          # This robustly finds all files in subdirectories and
+          # renames them to avoid collisions in the flat dir.
           while IFS= read -r -d '' p; do
             b=$(basename "$p")
             if [ -e "dist_flat/$b" ]; then
+              # Handle name collision (e.g., 'out.cpp' from 3 OSes)
               idx=$((idx+1))
               cp "$p" "dist_flat/${idx}-${b}"
             else
               cp "$p" "dist_flat/$b"
             fi
           done < <(find dist -type f -print0)
+          echo "--- Flattened Artifacts for Release ---"
           ls -lh dist_flat
+
+      # --- REFINED TAG NAME ---
+      # Creates a "sanitized" tag name.
+      # If your branch is "feature/new-parser", the tag "v123-feature/new-parser"
+      # is invalid. This step changes it to "v123-feature-new-parser".
+      - name: "📦 Prepare Release Tag"
+        id: tagger
+        shell: bash
+        run: |
+          SAN_BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9.-]/-/g')
+          TAG_NAME="v${{ github.run_number }}-${SAN_BRANCH_NAME}"
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: "🏷️ Create GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}-${{ github.ref_name }}
+          # Use the sanitized tag from the previous step
+          tag_name: ${{ steps.tagger.outputs.TAG_NAME }}
           name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
             🧩 **Pure-Rust-No-LLVM — Syntax-Aware Transpiler Edition**
 
-            • Rust → C++ Syntax Parsing  
-            • C++ → NASM → Executable  
-            • ProofLedger (SHA256)  
-            • 3OS Verified  
-            • All artifacts included  
+            • Rust → C++ Syntax Parsing
+            • C++ → ASM → Executable
+            • ProofLedger (SHA256)
+            • 3OS Verified
+            • All artifacts included
 
-            **Branch:** ${{ github.ref_name }}  
+            **Branch:** ${{ github.ref_name }}
             **Commit:** ${{ github.sha }}
           files: dist_flat/*
         env:
