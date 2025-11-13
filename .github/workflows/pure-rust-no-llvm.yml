@@ -28,13 +28,15 @@ jobs:
     timeout-minutes: 60
 
     steps:
+
       - name: "🧭 Checkout Repository"
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+
       # -------------------------------
-      # Setup
+      # Environment Setup
       # -------------------------------
       - name: "⚙️ Setup (Linux/macOS)"
         if: runner.os != 'Windows'
@@ -56,14 +58,15 @@ jobs:
           git config --global core.autocrlf false
           New-Item -ItemType Directory -Force -Path output | Out-Null
 
+
       # -------------------------------
-      # Example Rust Code
+      # Example Rust Source
       # -------------------------------
       - name: "📝 Create Example Rust Source"
         shell: bash
         run: |
           mkdir -p examples
-          cat > examples/hello.rs <<'EOF'
+          cat << 'EOF' > examples/hello.rs
 fn greet(name: &str) -> i32 {
     println!("Hello, {}", name);
     return 42;
@@ -72,16 +75,19 @@ fn greet(name: &str) -> i32 {
 fn main() {
     let x = 5;
     let y = 10;
+
     if x < y {
         println!("x is smaller than y");
     } else {
         println!("x is not smaller");
     }
+
     let result = greet("Rust");
     println!("Result: {}", result);
 }
 EOF
           echo "✅ Created examples/hello.rs"
+
 
       # -------------------------------
       # Rust → C++ Transpiler
@@ -89,7 +95,7 @@ EOF
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
         run: |
-          cat > transpile_rust_to_cpp.py <<'PYCODE'
+          cat << 'PYCODE' > transpile_rust_to_cpp.py
 import re, os
 
 src = "examples/hello.rs"
@@ -156,6 +162,7 @@ for line in rust:
         cpp.append("    "*indent + "{")
         indent += 1
         continue
+
     if "}" in line:
         indent = max(indent-1, 0)
         cpp.append("    "*indent + "}")
@@ -169,6 +176,7 @@ PYCODE
           python3 transpile_rust_to_cpp.py
           head -n 20 out.cpp
 
+
       # -------------------------------
       # C++ → ASM → Executable
       # -------------------------------
@@ -177,7 +185,7 @@ PYCODE
         run: |
           g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM warning"
 
-          # ----------- Normalize ASM for NASM -----------
+          # --- Normalize ASM to NASM format ---
           sed -i 's/\.intel_syntax noprefix//g' out.asm || true
           sed -i 's/\.att_syntax//g' out.asm || true
           sed -i 's/\.globl/ global /g' out.asm || true
@@ -194,6 +202,7 @@ PYCODE
           fi
 
           ls -lh output || true
+
 
       # -------------------------------
       # ProofLedger
@@ -233,6 +242,7 @@ PYCODE
     needs: build-3os
 
     steps:
+
       - name: "📥 Download Artifacts"
         uses: actions/download-artifact@v4
         with:
@@ -262,8 +272,7 @@ PYCODE
           body: |
             🧩 **Pure-Rust-No-LLVM — Syntax-Aware Transpiler Edition**
 
-            • Rust → C++ Basic Syntax Parsing  
-            • Functions, variables, if/else, println!, return  
+            • Rust → C++ Syntax Parsing  
             • C++ → NASM → Executable  
             • ProofLedger (SHA256)  
             • 3OS Verified  
