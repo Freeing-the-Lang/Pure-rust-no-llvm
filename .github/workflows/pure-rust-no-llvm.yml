@@ -1,24 +1,17 @@
 # Workflow name
 name: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
 
-# --- REFINED TRIGGERS ---
-# This is more controlled to prevent spamming releases.
-# It now runs on:
-# 1. Pushes to the 'main' branch.
-# 2. Pull Requests (opened, reopened, or new code pushed).
-# 3. The nightly schedule.
-# 4. Manual runs (workflow_dispatch).
 on:
   push:
-    branches: [ "main" ] # <--- Only runs on push to 'main'
+    branches: [ "main" ]
   pull_request:
-    types: [ opened, reopened, synchronize ] # <--- Removed 'closed'
+    types: [ opened, reopened, synchronize ]
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * *"
 
 permissions:
-  contents: write # <--- Required for creating releases
+  contents: write
 
 concurrency:
   group: pure-rust-no-llvm-${{ github.ref }}
@@ -30,10 +23,6 @@ jobs:
     name: "🧩 LLVM-Free Build — ${{ matrix.os }} / Branch ${{ github.ref_name }}"
     runs-on: ${{ matrix.os }}
     strategy:
-      # --- REFINED STRATEGY ---
-      # fail-fast: false ensures all 3 OS jobs will run to completion,
-      # even if one fails, so you can see all results.
-      # Removed 'max-parallel: 1' to allow OSes to build in parallel.
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
@@ -44,15 +33,11 @@ jobs:
       - name: "🧭 Checkout Repository"
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # <--- Good, fetches all history
+          fetch-depth: 0
 
       # -------------------------------
-      # Environment Setup (Refined)
+      # Environment Setup
       # -------------------------------
-      # --- REFINED SETUP ---
-      # Split setup into OS-specific steps.
-      # 'apt' is for Linux, 'brew' is for macOS.
-
       - name: "⚙️ Setup (Linux)"
         if: runner.os == 'Linux'
         shell: bash
@@ -64,7 +49,6 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # g++ (clang) and python3 are pre-installed
           brew install nasm
 
       - name: "⚙️ Setup (Windows)"
@@ -82,120 +66,118 @@ jobs:
 
 
       # -------------------------------
-      # Example Rust Source
+      # Example Rust Source (FIXED INDENTATION)
       # -------------------------------
       - name: "📝 Create Example Rust Source"
         shell: bash
         run: |
           mkdir -p examples
           cat << 'EOF' > examples/hello.rs
-fn greet(name: &str) -> i32 {
-    println!("Hello, {}", name);
-    return 42;
-}
+          fn greet(name: &str) -> i32 {
+              println!("Hello, {}", name);
+              return 42;
+          }
 
-fn main() {
-    let x = 5;
-    let y = 10;
+          fn main() {
+              let x = 5;
+              let y = 10;
 
-    if x < y {
-        println!("x is smaller than y");
-    } else {
-        println!("x is not smaller");
-    }
+              if x < y {
+                  println!("x is smaller than y");
+              } else {
+                  println!("x is not smaller");
+              }
 
-    let result = greet("Rust");
-    println!("Result: {}", result);
-}
-EOF
+              let result = greet("Rust");
+              println!("Result: {}", result);
+          }
+          EOF
           echo "✅ Created examples/hello.rs"
 
 
       # -------------------------------
-      # Rust → C++ Transpiler
+      # Rust → C++ Transpiler (FIXED INDENTATION)
       # -------------------------------
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
         run: |
-          # --- This is your custom Python transpiler logic ---
-          # --- (Unchanged) ---
           cat << 'PYCODE' > transpile_rust_to_cpp.py
-import re, os
+          import re, os
 
-src = "examples/hello.rs"
-dst = "out.cpp"
+          src = "examples/hello.rs"
+          dst = "out.cpp"
 
-rust = open(src).read().splitlines()
-cpp = [
-    "#include <iostream>",
-    "#include <string>",
-    "using namespace std;",
-    ""
-]
+          rust = open(src).read().splitlines()
+          cpp = [
+              "#include <iostream>",
+              "#include <string>",
+              "using namespace std;",
+              ""
+          ]
 
-fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)\s*->?\s*([\w<&>]+)?\s*\{?")
-let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
-print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
+          fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)\s*->?\s*([\w<&>]+)?\s*\{?")
+          let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
+          print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
 
-indent = 0
-for line in rust:
-    line = line.strip()
+          indent = 0
+          for line in rust:
+              line = line.strip()
 
-    fn_match = fn_pattern.match(line)
-    if fn_match:
-        name, args, ret = fn_match.groups()
-        args_cpp = args.replace("&str", "string").replace(":", "")
-        ret_cpp = "int" if (ret and "i32" in ret) else "void"
-        cpp.append(f"{ret_cpp} {name}({args_cpp}) "+"{")
-        indent += 1
-        continue
+              fn_match = fn_pattern.match(line)
+              if fn_match:
+                  name, args, ret = fn_match.groups()
+                  args_cpp = args.replace("&str", "string").replace(":", "")
+                  ret_cpp = "int" if (ret and "i32" in ret) else "void"
+                  cpp.append(f"{ret_cpp} {name}({args_cpp}) "+"{")
+                  indent += 1
+                  continue
 
-    let_match = let_pattern.match(line)
-    if let_match:
-        var, val = let_match.groups()
-        if '"' in val or "'" in val:
-            cpp.append("    "*indent + f'string {var} = {val};')
-        else:
-            cpp.append("    "*indent + f'auto {var} = {val};')
-        continue
+              let_match = let_pattern.match(line)
+              if let_match:
+                  var, val = let_match.groups()
+                  if '"' in val or "'" in val:
+                      cpp.append("    "*indent + f'string {var} = {val};')
+                  else:
+                      cpp.append("    "*indent + f'auto {var} = {val};')
+                  continue
 
-    pr = print_pattern.match(line)
-    if pr:
-        fmt, args = pr.groups()
-        out = fmt
-        if args:
-            parts = out.split("{}")
-            segs = []
-            for i, p in enumerate(parts):
-                segs.append(f'"{p}"')
-                if i < len(parts)-1:
-                    arg = args.split(",")[i].strip()
-                    segs.append(arg)
-            cpp_line = " << ".join(segs)
-            cpp.append("    "*indent + f"cout << {cpp_line} << endl;")
-        else:
-            cpp.append("    "*indent + f'cout << "{out}" << endl;')
-        continue
+              pr = print_pattern.match(line)
+              if pr:
+                  fmt, args = pr.groups()
+                  out = fmt
+                  if args:
+                      parts = out.split("{}")
+                      segs = []
+                      for i, p in enumerate(parts):
+                          segs.append(f'"{p}"')
+                          if i < len(parts)-1:
+                              arg = args.split(",")[i].strip()
+                              segs.append(arg)
+                      cpp_line = " << ".join(segs)
+                      cpp.append("    "*indent + f"cout << {cpp_line} << endl;")
+                  else:
+                      cpp.append("    "*indent + f'cout << "{out}" << endl;')
+                  continue
 
-    if line.startswith("return "):
-        val = line[len("return "):].rstrip(";")
-        cpp.append("    "*indent + f"return {val};")
-        continue
+              if line.startswith("return "):
+                  val = line[len("return "):].rstrip(";")
+                  cpp.append("    "*indent + f"return {val};")
+                  continue
 
-    if "{" in line:
-        cpp.append("    "*indent + "{")
-        indent += 1
-        continue
+              if "{" in line:
+                  cpp.append("    "*indent + "{")
+                  indent += 1
+                  continue
 
-    if "}" in line:
-        indent = max(indent-1, 0)
-        cpp.append("    "*indent + "}")
-        continue
+              if "}" in line:
+                  indent = max(indent-1, 0)
+                  cpp.append("    "*indent + "}")
+                  continue
 
-cpp.append("")
-open(dst, "w").write("\n".join(cpp))
-print(f"✅ Transpiled Rust → C++ to {dst}")
-PYCODE
+          cpp.append("")
+          open(dst, "w").write("\n".join(cpp))
+          print(f"✅ Transpiled Rust → C++ to {dst}")
+          PYCODE
 
           python3 transpile_rust_to_cpp.py
           echo "--- Transpiled C++ (out.cpp) ---"
@@ -204,16 +186,8 @@ PYCODE
 
 
       # -------------------------------
-      # C++ → ASM → Executable (Refined)
+      # C++ → ASM → Executable
       # -------------------------------
-      # --- REFINED BUILD ---
-      # This is now much simpler and more robust.
-      # 1. We let g++ create the .asm file (as an artifact).
-      # 2. We let g++ *also* create the final executable directly.
-      # 3. This removes the fragile 'sed' and 'nasm' build chain.
-      #    We still install NASM (from setup) in case your
-      #    transpiler ever wants to use it directly.
-
       - name: "⚙️ Generate ASM Artifact"
         shell: bash
         run: |
@@ -245,7 +219,6 @@ PYCODE
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum * > proofledger.txt
           else
-            # This is the Windows 'certutil' fallback
             certutil -hashfile out.exe SHA256 > proofledger.txt
           fi
           echo "" >> proofledger.txt
@@ -273,15 +246,7 @@ PYCODE
   release:
     name: "🏷️ Verified Multi-OS Syntax Transpiler Release"
     runs-on: ubuntu-latest
-    needs: build-3os # <--- Depends on all 3 OS builds succeeding
-
-    # --- REFINED RELEASE TRIGGER ---
-    # This 'if' condition is the most important change.
-    # It ensures this 'release' job ONLY runs if:
-    # 1. The event was a 'push' AND it was to the 'main' branch.
-    #    OR
-    # 2. The workflow was triggered manually (workflow_dispatch).
-    # This PREVENTS creating releases for Pull Requests.
+    needs: build-3os
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
 
     steps:
@@ -289,19 +254,16 @@ PYCODE
       - name: "📥 Download Artifacts"
         uses: actions/download-artifact@v4
         with:
-          path: dist # <--- Download all artifacts to 'dist' dir
+          path: dist
 
       - name: "🧹 Flatten for Release"
         shell: bash
         run: |
           mkdir -p dist_flat
           idx=0
-          # This robustly finds all files in subdirectories and
-          # renames them to avoid collisions in the flat dir.
           while IFS= read -r -d '' p; do
             b=$(basename "$p")
             if [ -e "dist_flat/$b" ]; then
-              # Handle name collision (e.g., 'out.cpp' from 3 OSes)
               idx=$((idx+1))
               cp "$p" "dist_flat/${idx}-${b}"
             else
@@ -311,10 +273,6 @@ PYCODE
           echo "--- Flattened Artifacts for Release ---"
           ls -lh dist_flat
 
-      # --- REFINED TAG NAME ---
-      # Creates a "sanitized" tag name.
-      # If your branch is "feature/new-parser", the tag "v123-feature/new-parser"
-      # is invalid. This step changes it to "v123-feature-new-parser".
       - name: "📦 Prepare Release Tag"
         id: tagger
         shell: bash
@@ -326,7 +284,6 @@ PYCODE
       - name: "🏷️ Create GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
-          # Use the sanitized tag from the previous step
           tag_name: ${{ steps.tagger.outputs.TAG_NAME }}
           name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
