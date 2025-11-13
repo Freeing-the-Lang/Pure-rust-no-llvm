@@ -118,7 +118,8 @@ jobs:
           ]
 
           # Regex captures: 1=name, 2=args, 3=return_type
-          fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)\s*->?\s*([\w<&>]+)?\s*\{?")
+          # FIX: Correctly handle functions without return types (like main) by making arrow optional
+          fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)(?:\s*->\s*([\w<&>]+))?\s*\{?")
           let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
           print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
 
@@ -217,9 +218,14 @@ jobs:
           # We add || true to prevent warning-treated-as-error from stopping build if configured strictly
           g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM generation warning (harmless)"
           
-          echo "--- Generated ASM (out.asm) ---"
-          head -n 20 out.asm
-          echo "-------------------------------"
+          if [ -f out.asm ]; then
+            echo "--- Generated ASM (out.asm) ---"
+            head -n 20 out.asm
+            echo "-------------------------------"
+          else
+            echo "❌ out.asm was not generated due to compilation errors."
+            exit 1
+          fi
 
       - name: "⚙️ Compile Executable"
         shell: bash
