@@ -96,7 +96,7 @@ jobs:
 
 
       # -------------------------------
-      # Rust → C++ Transpiler (FIXED TYPE DEDUCTION)
+      # Rust → C++ Transpiler (FIXED MAIN & IF/ELSE)
       # -------------------------------
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
@@ -117,20 +117,21 @@ jobs:
               ""
           ]
 
-          # Regex captures: 1=name, 2=args, 3=return_type
+          # Regex patterns
           fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)(?:\s*->\s*([\w<&>]+))?\s*\{?")
           let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
           print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
+          if_pattern = re.compile(r"if\s+(.*?)\s*\{")
 
           indent = 0
           for line in rust:
               line = line.strip()
 
+              # 1. Function Definition
               fn_match = fn_pattern.match(line)
               if fn_match:
                   name, args, ret = fn_match.groups()
                   
-                  # --- Fix: Reorder Args from 'name: type' to 'type name' ---
                   args_cpp_list = []
                   if args and args.strip():
                       for arg in args.split(","):
@@ -138,33 +139,34 @@ jobs:
                               p_name, p_type = arg.split(":", 1)
                               p_name = p_name.strip()
                               p_type = p_type.strip()
-                              
                               if "&str" in p_type: p_type = "string"
                               elif "i32" in p_type: p_type = "int"
-                              
                               args_cpp_list.append(f"{p_type} {p_name}")
                   
                   args_cpp = ", ".join(args_cpp_list)
 
-                  ret_cpp = "int" if (ret and "i32" in ret) else "void"
+                  # FIX: force main to return int
+                  if name == "main":
+                      ret_cpp = "int"
+                  else:
+                      ret_cpp = "int" if (ret and "i32" in ret) else "void"
+
                   cpp.append(f"{ret_cpp} {name}({args_cpp}) "+"{")
                   indent += 1
                   continue
 
+              # 2. Let Binding
               let_match = let_pattern.match(line)
               if let_match:
                   var, val = let_match.groups()
                   val = val.strip()
-                  
-                  # --- FIX: Smarter type deduction ---
-                  # Only force 'string' if it is a literal starting with quotes.
-                  # 'greet("Rust")' contains quotes but starts with 'g', so it becomes 'auto'.
                   if val.startswith('"') or val.startswith("'"):
                       cpp.append("    "*indent + f'string {var} = {val};')
                   else:
                       cpp.append("    "*indent + f'auto {var} = {val};')
                   continue
 
+              # 3. Println
               pr = print_pattern.match(line)
               if pr:
                   fmt, args = pr.groups()
@@ -183,19 +185,37 @@ jobs:
                       cpp.append("    "*indent + f'cout << "{out}" << endl;')
                   continue
 
+              # 4. If Statement (FIXED)
+              if_match = if_pattern.match(line)
+              if if_match:
+                  cond = if_match.group(1)
+                  cpp.append("    "*indent + f"if ({cond}) " + "{")
+                  indent += 1
+                  continue
+                  
+              # 5. Else / Else If (FIXED)
+              if line.startswith("} else {"):
+                  indent = max(indent-1, 0)
+                  cpp.append("    "*indent + "} else {")
+                  indent += 1
+                  continue
+
+              # 6. Return
               if line.startswith("return "):
                   val = line[len("return "):].rstrip(";")
                   cpp.append("    "*indent + f"return {val};")
                   continue
 
-              if "{" in line:
-                  cpp.append("    "*indent + "{")
-                  indent += 1
-                  continue
-
-              if "}" in line:
+              # 7. Closing Brace
+              if line == "}":
                   indent = max(indent-1, 0)
                   cpp.append("    "*indent + "}")
+                  continue
+
+              # 8. Generic Opening Brace (fallback)
+              if line.endswith("{"):
+                  cpp.append("    "*indent + "{")
+                  indent += 1
                   continue
 
           cpp.append("")
