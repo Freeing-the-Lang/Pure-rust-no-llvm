@@ -1,5 +1,5 @@
 # Workflow name
-name: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
+mame: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
 
 on:
   push:
@@ -100,6 +100,8 @@ jobs:
       # -------------------------------
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           cat << 'PYCODE' > transpile_rust_to_cpp.py
           import re, os
