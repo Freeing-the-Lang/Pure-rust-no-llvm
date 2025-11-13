@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+
   build-3os:
     name: "🧩 LLVM-Free Build — ${{ matrix.os }} / Branch ${{ github.ref_name }}"
     runs-on: ${{ matrix.os }}
@@ -33,7 +34,7 @@ jobs:
           fetch-depth: 0
 
       # -------------------------------
-      # Setup Environments
+      # Setup
       # -------------------------------
       - name: "⚙️ Setup (Linux/macOS)"
         if: runner.os != 'Windows'
@@ -41,7 +42,6 @@ jobs:
         run: |
           sudo apt update || true
           sudo apt install -y python3 g++ nasm || true
-          chmod +x build_to_nasm.sh
 
       - name: "⚙️ Setup (Windows)"
         if: runner.os == 'Windows'
@@ -53,11 +53,11 @@ jobs:
             choco install nasm -y --no-progress
           }
           nasm -v
-          mkdir output
           git config --global core.autocrlf false
+          New-Item -ItemType Directory -Force -Path output | Out-Null
 
       # -------------------------------
-      # Example Rust Code (자동)
+      # Example Rust Code
       # -------------------------------
       - name: "📝 Create Example Rust Source"
         shell: bash
@@ -84,7 +84,7 @@ EOF
           echo "✅ Created examples/hello.rs"
 
       # -------------------------------
-      # Rust → C++ Syntax Transpiler
+      # Rust → C++ Transpiler
       # -------------------------------
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
@@ -94,10 +94,6 @@ import re, os
 
 src = "examples/hello.rs"
 dst = "out.cpp"
-
-if not os.path.exists(src):
-    print("❌ No Rust source found")
-    exit(1)
 
 rust = open(src).read().splitlines()
 cpp = [
@@ -115,7 +111,6 @@ indent = 0
 for line in rust:
     line = line.strip()
 
-    # Function definitions
     fn_match = fn_pattern.match(line)
     if fn_match:
         name, args, ret = fn_match.groups()
@@ -125,24 +120,20 @@ for line in rust:
         indent += 1
         continue
 
-    # Variable declarations
     let_match = let_pattern.match(line)
     if let_match:
         var, val = let_match.groups()
         if '"' in val or "'" in val:
-            val_cpp = val.replace('"', '"')
-            cpp.append("    "*indent + f'string {var} = {val_cpp};')
+            cpp.append("    "*indent + f'string {var} = {val};')
         else:
             cpp.append("    "*indent + f'auto {var} = {val};')
         continue
 
-    # println! macro
     pr = print_pattern.match(line)
     if pr:
         fmt, args = pr.groups()
         out = fmt
         if args:
-            # Handle "{}" placeholders
             parts = out.split("{}")
             segs = []
             for i, p in enumerate(parts):
@@ -156,13 +147,11 @@ for line in rust:
             cpp.append("    "*indent + f'cout << "{out}" << endl;')
         continue
 
-    # return
     if line.startswith("return "):
         val = line[len("return "):].rstrip(";")
         cpp.append("    "*indent + f"return {val};")
         continue
 
-    # braces
     if "{" in line:
         cpp.append("    "*indent + "{")
         indent += 1
@@ -178,7 +167,6 @@ print(f"✅ Transpiled Rust → C++ to {dst}")
 PYCODE
 
           python3 transpile_rust_to_cpp.py
-          echo "🔍 out.cpp Preview:"
           head -n 20 out.cpp
 
       # -------------------------------
@@ -188,14 +176,23 @@ PYCODE
         shell: bash
         run: |
           g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM warning"
+
+          # ----------- Normalize ASM for NASM -----------
+          sed -i 's/\.intel_syntax noprefix//g' out.asm || true
+          sed -i 's/\.att_syntax//g' out.asm || true
+          sed -i 's/\.globl/ global /g' out.asm || true
+          sed -i 's/\t//g' out.asm || true
+
           mkdir -p output
-          if [ "$RUNNER_OS" = "Windows" ]; then
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
             nasm -f win64 out.asm -o out.obj || true
             g++ out.obj -o output/out.exe || true
           else
             nasm -f elf64 out.asm -o out.o || true
             g++ out.o -o output/out || true
           fi
+
           ls -lh output || true
 
       # -------------------------------
@@ -211,7 +208,7 @@ PYCODE
             certutil -hashfile out.exe SHA256 > proofledger.txt
           fi
           echo "Generated on $(date -u)" >> proofledger.txt
-          echo "Runner: $RUNNER_OS" >> proofledger.txt
+          echo "Runner: ${{ runner.os }}" >> proofledger.txt
           echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
           echo "Commit: $GITHUB_SHA" >> proofledger.txt
           cat proofledger.txt
@@ -226,8 +223,9 @@ PYCODE
             out.asm
           if-no-files-found: warn
 
+
   # -------------------------------
-  # Release
+  # Verified Multi-OS Release
   # -------------------------------
   release:
     name: "🏷️ Verified Multi-OS Syntax Transpiler Release"
@@ -243,35 +241,33 @@ PYCODE
       - name: "🧹 Flatten for Release"
         shell: bash
         run: |
-          set -e
           mkdir -p dist_flat
           idx=0
           while IFS= read -r -d '' p; do
             b=$(basename "$p")
             if [ -e "dist_flat/$b" ]; then
               idx=$((idx+1))
-              cp -v "$p" "dist_flat/${idx}-${b}"
+              cp "$p" "dist_flat/${idx}-${b}"
             else
-              cp -v "$p" "dist_flat/$b"
+              cp "$p" "dist_flat/$b"
             fi
           done < <(find dist -type f -print0)
-          echo "---- FINAL FILES ----"
           ls -lh dist_flat
 
       - name: "🏷️ Create GitHub Release"
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}-${{ github.ref_name }}-${{ github.run_id }}
-          name: "Pure-Rust-No-LLVM Syntax-Aware Transpiler Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
+          tag_name: v${{ github.run_number }}-${{ github.ref_name }}
+          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — Branch: ${{ github.ref_name }}"
           body: |
             🧩 **Pure-Rust-No-LLVM — Syntax-Aware Transpiler Edition**
 
-            ✅ Rust → C++ with basic syntax parsing  
-            ✅ Functions, variables, if/else, println!, return recognized  
-            ✅ C++ → NASM → Executable build chain  
-            ✅ ProofLedger with SHA256 validation  
-            ✅ 3OS verified and automatically released  
-            ✅ All artifacts (.cpp, .asm, .exe/out, .txt) included  
+            • Rust → C++ Basic Syntax Parsing  
+            • Functions, variables, if/else, println!, return  
+            • C++ → NASM → Executable  
+            • ProofLedger (SHA256)  
+            • 3OS Verified  
+            • All artifacts included  
 
             **Branch:** ${{ github.ref_name }}  
             **Commit:** ${{ github.sha }}
