@@ -66,7 +66,7 @@ jobs:
 
 
       # -------------------------------
-      # Example Rust Source (FIXED INDENTATION)
+      # Example Rust Source
       # -------------------------------
       - name: "📝 Create Example Rust Source"
         shell: bash
@@ -96,7 +96,7 @@ jobs:
 
 
       # -------------------------------
-      # Rust → C++ Transpiler (FIXED ARG PARSING)
+      # Rust → C++ Transpiler (FIXED TYPE DEDUCTION)
       # -------------------------------
       - name: "🔁 Run Syntax-Aware Rust → C++ Transpiler"
         shell: bash
@@ -118,7 +118,6 @@ jobs:
           ]
 
           # Regex captures: 1=name, 2=args, 3=return_type
-          # FIX: Correctly handle functions without return types (like main) by making arrow optional
           fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)(?:\s*->\s*([\w<&>]+))?\s*\{?")
           let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
           print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
@@ -131,24 +130,21 @@ jobs:
               if fn_match:
                   name, args, ret = fn_match.groups()
                   
-                  # --- FIX: Reorder Args from 'name: type' to 'type name' ---
+                  # --- Fix: Reorder Args from 'name: type' to 'type name' ---
                   args_cpp_list = []
                   if args and args.strip():
-                      # Split by comma to handle multiple args
                       for arg in args.split(","):
                           if ":" in arg:
                               p_name, p_type = arg.split(":", 1)
                               p_name = p_name.strip()
                               p_type = p_type.strip()
                               
-                              # Map Rust types to C++
                               if "&str" in p_type: p_type = "string"
                               elif "i32" in p_type: p_type = "int"
                               
                               args_cpp_list.append(f"{p_type} {p_name}")
                   
                   args_cpp = ", ".join(args_cpp_list)
-                  # ----------------------------------------------------------
 
                   ret_cpp = "int" if (ret and "i32" in ret) else "void"
                   cpp.append(f"{ret_cpp} {name}({args_cpp}) "+"{")
@@ -158,7 +154,12 @@ jobs:
               let_match = let_pattern.match(line)
               if let_match:
                   var, val = let_match.groups()
-                  if '"' in val or "'" in val:
+                  val = val.strip()
+                  
+                  # --- FIX: Smarter type deduction ---
+                  # Only force 'string' if it is a literal starting with quotes.
+                  # 'greet("Rust")' contains quotes but starts with 'g', so it becomes 'auto'.
+                  if val.startswith('"') or val.startswith("'"):
                       cpp.append("    "*indent + f'string {var} = {val};')
                   else:
                       cpp.append("    "*indent + f'auto {var} = {val};')
@@ -214,8 +215,6 @@ jobs:
       - name: "⚙️ Generate ASM Artifact"
         shell: bash
         run: |
-          # Note: On macOS clang++, -masm=intel might emit a warning but will proceed.
-          # We add || true to prevent warning-treated-as-error from stopping build if configured strictly
           g++ -S -masm=intel out.cpp -o out.asm || echo "⚠️ ASM generation warning (harmless)"
           
           if [ -f out.asm ]; then
