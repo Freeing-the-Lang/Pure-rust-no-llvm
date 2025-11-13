@@ -1,5 +1,5 @@
 # Workflow name
-mame: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
+name: "🏗️ Pure-Rust-No-LLVM — Syntax-Aware Transpiler + 3OS Verified Release"
 
 on:
   push:
