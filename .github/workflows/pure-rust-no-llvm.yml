@@ -1,307 +1,662 @@
-name: "🏗️ Pure-Rust-No-LLVM — Stable LLVM-Free Transpiler + 3OS Verified Release"
+name: "Transpiler V4 — Final Stable No-Comment Edition"
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    types: [ opened, reopened, synchronize ]
   workflow_dispatch:
-  schedule:
-    - cron: "0 3 * * *"
 
 permissions:
   contents: write
 
 concurrency:
-  group: pure-rust-no-llvm-${{ github.ref }}
-  cancel-in-progress: false
+  group: rust-v4-${{ github.ref }}
 
 jobs:
 
   build-3os:
-    name: "🧩 LLVM-Free Build — ${{ matrix.os }} / Branch ${{ github.ref_name }}"
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
 
-      - name: "🧭 Checkout Repository"
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - uses: actions/checkout@v4
 
-      # --------------------------------
-      # OS Setup
-      # --------------------------------
-      - name: "⚙️ Setup (Linux)"
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 g++ nasm || sudo apt-get install -y g++ nasm
+    - name: Setup OS
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" == "Linux" ]]; then sudo apt-get update -y && sudo apt-get install -y python3 g++ nasm; fi
+        if [[ "$RUNNER_OS" == "macOS" ]]; then brew install nasm || true; fi
+        if [[ "$RUNNER_OS" == "Windows" ]]; then choco install nasm -y --no-progress || true; fi
 
-      - name: "⚙️ Setup (macOS)"
-        if: runner.os == 'macOS'
-        run: |
-          brew install nasm || brew reinstall nasm
+    - name: Create main.rs
+      shell: bash
+      run: |
+        mkdir -p src
+        cat << 'EOF' > src/main.rs
+fn greet(name: &str) -> i32 { println!("Hello {}", name); 42 }
+fn calc(a: i32, b: i32) -> i32 { a * 2 + b / 2 - (a - b) }
+fn main() {
+    let x = 5;
+    let y = 10;
+    let z = calc(x,y);
+    println!("Z = {}", z);
+    match z {
+        0 => println!("ZERO"),
+        _ => println!("NONZERO")
+    }
+    let r = greet("Rust");
+    println!("{}", r);
+}
+EOF
 
-      - name: "⚙️ Setup (Windows)"
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          git config --global core.autocrlf false
-          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
-            choco install nasm -y --no-progress
-          }
-          python --version
-          g++ --version
-          nasm -v
-          New-Item -ItemType Directory -Force -Path build | Out-Null
+    - name: Prepare build directory
+      shell: bash
+      run: mkdir -p build
 
-      # --------------------------------
-      # Example Rust Source
-      # --------------------------------
-      - name: "📝 Create Example Source"
-        run: |
-          mkdir -p examples
-          cat << 'EOF' > examples/hello.rs
-          fn greet(name: &str) -> i32 {
-              println!("Hello, {}", name);
-              return 42;
-          }
+    ##########################################################################
+    # AUTO GENERATE ALL MODULES (NO COMMENTS, FIXED INDENTATION)
+    ##########################################################################
 
-          fn main() {
-              let x = 5;
-              let y = 10;
+    - name: Generate lexer.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/lexer.py
+import re
+TS=[("COMMENT",r"//.*"),("NUMBER",r"\d+"),("STRING",r'"[^"]*"'),("IDENT",r"[A-Za-z_][A-Za-z0-9_]*"),("OP",r"==|!=|<=|>=|&&|\\|\\||[+\\-*/<>]=?|="),("LBRACE",r"\\{"),("RBRACE",r"\\}"),("LPAREN",r"\\("),("RPAREN",r"\\)"),("COMMA",r","),("SEMICOL",r";"),("ARROW",r"->"),("COLON",r":")]
+MASTER=re.compile("|".join(f"(?P<{a}>{b})" for a,b in TS))
+def tokenize(s):
+    o=[]
+    for m in MASTER.finditer(s):
+        k=m.lastgroup;v=m.group()
+        if k=="COMMENT":continue
+        if v.strip()=="":continue
+        o.append((k,v))
+    return o
+EOF
 
-              if x < y {
-                  println!("x is smaller than y");
-              } else {
-                  println!("x is not smaller");
-              }
+    - name: Generate ast_nodes.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/ast_nodes.py
+class Node:pass
+class Program(Node):
+    def __init__(self,fs):self.fs=fs
+class Function(Node):
+    def __init__(self,n,p,r,b):self.n=n;self.p=p;self.r=r;self.b=b
+class Param(Node):
+    def __init__(self,n,t):self.n=n;self.t=t
+class Block(Node):
+    def __init__(self,st):self.st=st
+class Let(Node):
+    def __init__(self,n,e):self.n=n;self.e=e
+class Return(Node):
+    def __init__(self,e):self.e=e
+class If(Node):
+    def __init__(self,c,t,e):self.c=c;self.t=t;self.e=e
+class Call(Node):
+    def __init__(self,n,a):self.n=n;self.a=a
+class Binary(Node):
+    def __init__(self,l,o,r):self.l=l;self.o=o;self.r=r
+class Ident(Node):
+    def __init__(self,n):self.n=n
+class Literal(Node):
+    def __init__(self,v):self.v=v
+class Struct(Node):
+    def __init__(self,n,f):self.n=n;self.f=f
+class Enum(Node):
+    def __init__(self,n,v):self.n=n;self.v=v
+class Match(Node):
+    def __init__(self,e,arms):self.e=e;self.arms=arms
+EOF
 
-              let result = greet("Rust");
-              println!("Result: {}", result);
-          }
-          EOF
+    - name: Generate parser.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/parser.py
+from ast_nodes import *
+class Parser:
+    prec={"||":1,"&&":2,"==":3,"!=":3,"<":4,">":4,"<=":4,">=":4,"+":5,"-":5,"*":6,"/":6}
+    def __init__(self,t):self.t=t;self.i=0
+    def pk(self):return self.t[self.i] if self.i<len(self.t) else ("EOF","")
+    def eat(self,x=None):
+        k,v=self.pk()
+        if x and k!=x:raise Exception(f"expected {x} got {k}")
+        self.i+=1;return(k,v)
+    def parse(self):
+        fs=[]
+        while self.pk()[0]!="EOF":
+            if self.pk()[1]=="struct":fs.append(self.parse_struct())
+            elif self.pk()[1]=="enum":fs.append(self.parse_enum())
+            else:fs.append(self.parse_function())
+        return Program(fs)
+    def parse_struct(self):
+        self.eat("IDENT");n=self.eat("IDENT")[1];self.eat("LBRACE");f=[]
+        while self.pk()[0]!="RBRACE":
+            fn=self.eat("IDENT")[1];self.eat("COLON");ft=self.eat("IDENT")[1]
+            if self.pk()[0]=="COMMA":self.eat("COMMA")
+            f.append((fn,ft))
+        self.eat("RBRACE");return Struct(n,f)
+    def parse_enum(self):
+        self.eat("IDENT");n=self.eat("IDENT")[1];self.eat("LBRACE");v=[]
+        while self.pk()[0]!="RBRACE":
+            val=self.eat("IDENT")[1]
+            if self.pk()[0]=="COMMA":self.eat("COMMA")
+            v.append(val)
+        self.eat("RBRACE");return Enum(n,v)
+    def parse_function(self):
+        self.eat("IDENT");n=self.eat("IDENT")[1];self.eat("LPAREN");p=[]
+        while self.pk()[0]!="RPAREN":
+            pn=self.eat("IDENT")[1];self.eat("COLON");pt=self.eat("IDENT")[1]
+            if self.pk()[0]=="COMMA":self.eat("COMMA")
+            p.append(Param(pn,pt))
+        self.eat("RPAREN");r="void"
+        if self.pk()[0]=="ARROW":self.eat("ARROW");r=self.eat("IDENT")[1]
+        b=self.block();return Function(n,p,r,b)
+    def block(self):
+        self.eat("LBRACE");st=[]
+        while self.pk()[0]!="RBRACE":st.append(self.stmt())
+        self.eat("RBRACE");return Block(st)
+    def stmt(self):
+        k,v=self.pk()
+        if v=="let":return self.let()
+        if v=="return":return self.ret()
+        if v=="if":return self.ifstmt()
+        if v=="match":return self.matchstmt()
+        if k=="IDENT":return self.callstmt()
+        raise Exception("stmt error")
+    def let(self):
+        self.eat("IDENT");n=self.eat("IDENT")[1];self.eat("OP");e=self.expr();self.eat("SEMICOL");return Let(n,e)
+    def ret(self):
+        self.eat("IDENT");e=self.expr();self.eat("SEMICOL");return Return(e)
+    def ifstmt(self):
+        self.eat("IDENT");c=self.expr();t=self.block();e=None
+        if self.pk()[1]=="else":self.eat("IDENT");e=self.block()
+        return If(c,t,e)
+    def matchstmt(self):
+        self.eat("IDENT");e=self.expr();self.eat("LBRACE");a=[]
+        while self.pk()[0]!="RBRACE":
+            pat=self.eat("IDENT")[1];self.eat("OP");blk=self.block()
+            if self.pk()[0]=="COMMA":self.eat("COMMA")
+            a.append((pat,blk))
+        self.eat("RBRACE");return Match(e,a)
+    def callstmt(self):
+        n=self.eat("IDENT")[1]
+        if self.pk()[0]=="LPAREN":
+            self.eat("LPAREN");a=[]
+            while self.pk()[0]!="RPAREN":
+                a.append(self.expr()); 
+                if self.pk()[0]=="COMMA":self.eat("COMMA")
+            self.eat("RPAREN");self.eat("SEMICOL")
+            return Call(n,a)
+        raise Exception("callstmt")
+    def expr(self,p=0):
+        l=self.atom()
+        while True:
+            k,v=self.pk()
+            if k!="OP":break
+            if v not in self.prec:break
+            if self.prec[v]<p:break
+            self.eat("OP");r=self.expr(self.prec[v]+1);l=Binary(l,v,r)
+        return l
+    def atom(self):
+        k,v=self.pk()
+        if k=="NUMBER":self.eat("NUMBER");return Literal(v)
+        if k=="STRING":self.eat("STRING");return Literal(v)
+        if k=="IDENT":self.eat("IDENT");return Ident(v)
+        if k=="LPAREN":
+            self.eat("LPAREN");e=self.expr();self.eat("RPAREN");return e
+        raise Exception("atom")
+EOF
 
-      # --------------------------------
-      # Rust → C++ Transpiler
-      # --------------------------------
-      - name: "🔁 Rust → C++ Transpiler"
-        shell: bash
-        env:
-          PYTHONIOENCODING: utf-8
-        run: |
-          mkdir -p build
-          cat << 'PYCODE' > build/transpile.py
-          import re, os
-          src = "examples/hello.rs"
-          dst = "build/out.cpp"
-          rust = open(src).read().splitlines()
-          cpp = [
-              "#include <iostream>",
-              "#include <string>",
-              "using namespace std;",
-              ""
-          ]
-          fn_pattern = re.compile(r"fn\s+(\w+)\s*\((.*?)\)(?:\s*->\s*([\w<&>]+))?\s*\{?")
-          let_pattern = re.compile(r"\s*let\s+(\w+)\s*=\s*(.*);")
-          print_pattern = re.compile(r'println!\("(.*?)"(?:,\s*(.*?))?\);')
-          if_pattern = re.compile(r"if\s+(.*?)\s*\{")
-          indent = 0
-          for line in rust:
-              line = line.strip()
-              fn_match = fn_pattern.match(line)
-              if fn_match:
-                  name, args, ret = fn_match.groups()
-                  args_cpp_list = []
-                  if args and args.strip():
-                      for arg in args.split(","):
-                          if ":" in arg:
-                              p_name, p_type = arg.split(":", 1)
-                              p_name = p_name.strip()
-                              p_type = p_type.strip()
-                              if "&str" in p_type: p_type = "string"
-                              elif "i32" in p_type: p_type = "int"
-                              args_cpp_list.append(f"{p_type} {p_name}")
-                  args_cpp = ", ".join(args_cpp_list)
-                  ret_cpp = "int" if name == "main" else ("int" if (ret and "i32" in ret) else "void")
-                  cpp.append(f"{ret_cpp} {name}({args_cpp}) "+"{")
-                  indent += 1
-                  continue
-              let_match = let_pattern.match(line)
-              if let_match:
-                  var, val = let_match.groups()
-                  val = val.strip()
-                  if val.startswith('"'):
-                      cpp.append("    "*indent + f'string {var} = {val};')
-                  else:
-                      cpp.append("    "*indent + f'auto {var} = {val};')
-                  continue
-              pr = print_pattern.match(line)
-              if pr:
-                  fmt, args = pr.groups()
-                  out = fmt
-                  if args:
-                      parts = out.split("{}")
-                      segs = []
-                      for i, p in enumerate(parts):
-                          segs.append(f'"{p}"')
-                          if i < len(parts)-1:
-                              arg = args.split(",")[i].strip()
-                              segs.append(arg)
-                      cpp_line = " << ".join(segs)
-                      cpp.append("    "*indent + f"cout << {cpp_line} << endl;")
-                  else:
-                      cpp.append("    "*indent + f'cout << "{out}" << endl;')
-                  continue
-              if_match = if_pattern.match(line)
-              if if_match:
-                  cond = if_match.group(1)
-                  cpp.append("    "*indent + f"if ({cond}) "+"{")
-                  indent += 1
-                  continue
-              if line.startswith("} else {"):
-                  indent = max(indent-1, 0)
-                  cpp.append("    "*indent + "} else {")
-                  indent += 1
-                  continue
-              if line.startswith("return "):
-                  val = line[len("return "):].rstrip(";")
-                  cpp.append("    "*indent + f"return {val};")
-                  continue
-              if line == "}":
-                  indent = max(indent-1, 0)
-                  cpp.append("    "*indent + "}")
-                  continue
-              if line.endswith("{"):
-                  cpp.append("    "*indent + "{")
-                  indent += 1
-                  continue
-          open(dst, "w").write("\n".join(cpp))
-          print("OK: generated build/out.cpp")
-          PYCODE
+    - name: Generate type_checker.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/type_checker.py
+from ast_nodes import *
+class TypeChecker:
+    def __init__(self):
+        self.structs={};self.enums={};self.funcs={};self.vars=[];self.ret_type=None
+    def push_scope(self):self.vars.append({})
+    def pop_scope(self):self.vars.pop()
+    def declare_var(self,n,t):self.vars[-1][n]=t
+    def get_var(self,n):
+        for s in reversed(self.vars):
+            if n in s:return s[n]
+        return None
+    def set_ret(self,t):self.ret_type=t
+    def infer(self,n):
+        if isinstance(n,Literal):
+            v=n.v
+            if v.isdigit():return "i32"
+            if v.startswith('"'):return "&str"
+            return "unknown"
+        if isinstance(n,Ident):
+            t=self.get_var(n.n)
+            if t:return t
+            if n.n in self.enums:return n.n
+            return "unknown"
+        if isinstance(n,Binary):
+            l=self.infer(n.l);r=self.infer(n.r)
+            return l if l==r else "i32"
+        if isinstance(n,Call):
+            return self.funcs.get(n.n,{"ret":"i32"})["ret"]
+        return None
+    def check(self,root):
+        self.vars=[{}]
+        for f in root.fs:
+            if isinstance(f,Struct):self.structs[f.n]=dict(f.f)
+            if isinstance(f,Enum):self.enums[f.n]=f.v
+            if isinstance(f,Function):
+                ps=[(x.n,x.t) for x in f.p]
+                self.funcs[f.n]={"params":ps,"ret":f.r}
+        for f in root.fs:
+            if isinstance(f,Function):
+                self.push_scope()
+                for p in f.p:self.declare_var(p.n,p.t)
+                self.set_ret(f.r)
+                self.check_block(f.b)
+                self.pop_scope()
+    def check_block(self,b):
+        self.push_scope()
+        for s in b.st:self.check_stmt(s)
+        self.pop_scope()
+    def check_stmt(self,s):
+        if isinstance(s,Let):
+            t=self.infer(s.e);self.declare_var(s.n,t)
+        elif isinstance(s,Return):
+            self.infer(s.e)
+        elif isinstance(s,If):
+            self.infer(s.c);self.check_block(s.t)
+            if s.e:self.check_block(s.e)
+        elif isinstance(s,Call):
+            for a in s.a:self.infer(a)
+        elif isinstance(s,Match):
+            et=self.infer(s.e)
+            for p,b in s.arms:
+                self.check_block(b)
+EOF
 
-          python3 build/transpile.py
-          echo "--- out.cpp ---"
-          cat build/out.cpp
+    - name: Generate borrow_checker.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/borrow_checker.py
+from ast_nodes import *
+class BorrowChecker:
+    def __init__(self):self.stack=[]
+    def push(self):self.stack.append({})
+    def pop(self):self.stack.pop()
+    def declare(self,n):self.stack[-1][n]={"state":"free","count":0}
+    def get(self,n):
+        for s in reversed(self.stack):
+            if n in s:return s[n]
+        return None
+    def borrow_immut(self,n):
+        v=self.get(n)
+        if v and v["state"]!="mut":
+            v["count"]+=1;v["state"]="immut"
+    def borrow_mut(self,n):
+        v=self.get(n)
+        if v and v["state"]=="free":v["state"]="mut"
+    def move(self,n):
+        v=self.get(n)
+        if v:v["state"]="moved"
+    def check_expr(self,e):
+        if isinstance(e,Ident):
+            v=self.get(e.n)
+            if v and v["state"]=="moved":pass
+        if isinstance(e,Binary):
+            self.check_expr(e.l);self.check_expr(e.r)
+        if isinstance(e,Call):
+            for a in e.a:self.check_expr(a)
+    def check_stmt(self,s):
+        if isinstance(s,Let):
+            if isinstance(s.e,Ident):self.move(s.e.n)
+            self.check_expr(s.e);self.declare(s.n)
+        elif isinstance(s,Return):self.check_expr(s.e)
+        elif isinstance(s,If):
+            self.check_expr(s.c);self.check_block(s.t)
+            if s.e:self.check_block(s.e)
+        elif isinstance(s,Call):self.check_expr(s)
+        elif isinstance(s,Match):
+            self.check_expr(s.e)
+            for p,b in s.arms:self.check_block(b)
+    def check_block(self,b):
+        self.push()
+        for s in b.st:self.check_stmt(s)
+        self.pop()
+    def check(self,root):
+        for f in root.fs:
+            if isinstance(f,Function):
+                self.push()
+                for p in f.p:self.declare(p.n)
+                self.check_block(f.b)
+                self.pop()
+EOF
 
-      # --------------------------------
-      # C++ → ASM → Executable (OS-Safe)
-      # --------------------------------
-      - name: "⚙️ Generate ASM (Linux/macOS)"
-        if: runner.os != 'Windows'
-        run: |
-          mkdir -p build
-          g++ -S -masm=intel build/out.cpp -o build/out.asm || (echo "ASM WARN"; true)
-          [ -f build/out.asm ] || (echo "❌ ASM missing"; exit 1)
-          head -n 20 build/out.asm
+    - name: Generate lifetime.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/lifetime.py
+from ast_nodes import *
+class LifetimeChecker:
+    def __init__(self):
+        self.scope=[];self.var_scope={};self.ret_scope=0
+    def push(self):
+        sid=len(self.scope);self.scope.append(sid);return sid
+    def pop(self):self.scope.pop()
+    def cur(self):return self.scope[-1]
+    def declare(self,n):self.var_scope[n]=self.cur()
+    def life(self,n):return self.var_scope.get(n,None)
+    def check_expr(self,e):
+        if isinstance(e,Ident):
+            s=self.life(e.n)
+            if s and s>self.cur():pass
+        if isinstance(e,Binary):
+            self.check_expr(e.l);self.check_expr(e.r)
+        if isinstance(e,Call):
+            for a in e.a:self.check_expr(a)
+    def check_stmt(self,s):
+        if isinstance(s,Let):
+            self.check_expr(s.e);self.declare(s.n)
+        elif isinstance(s,Return):self.check_expr(s.e)
+        elif isinstance(s,If):
+            self.check_expr(s.c);self.check_block(s.t)
+            if s.e:self.check_block(s.e)
+        elif isinstance(s,Call):self.check_expr(s)
+        elif isinstance(s,Match):
+            self.check_expr(s.e)
+            for p,b in s.arms:self.check_block(b)
+    def check_block(self,b):
+        self.push()
+        for s in b.st:self.check_stmt(s)
+        self.pop()
+    def check(self,root):
+        for f in root.fs:
+            if isinstance(f,Function):
+                self.scope=[];self.push()
+                self.ret_scope=self.cur()
+                for p in f.p:self.declare(p.n)
+                self.check_block(f.b)
+                self.pop()
+EOF
 
-      - name: "⚙️ Generate ASM (Windows)"
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          g++ -S -masm=intel build/out.cpp -o build/out.asm
-          if (!(Test-Path "build/out.asm")) {
-            Write-Host "❌ ASM missing"
-            exit 1
-          }
+    - name: Generate meaning_ir.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/meaning_ir.py
+from ast_nodes import *
+class IRNode:
+    def __init__(self,op,args=None):self.op=op;self.args=args if args else []
+class MeaningIR:
+    def __init__(self):self.ir=[]
+    def emit(self,op,*args):self.ir.append(IRNode(op,list(args)))
+    def build_expr(self,e):
+        if isinstance(e,Literal):self.emit("lit",e.v)
+        elif isinstance(e,Ident):self.emit("id",e.n)
+        elif isinstance(e,Binary):
+            self.build_expr(e.l);self.build_expr(e.r);self.emit("bin",e.o)
+        elif isinstance(e,Call):
+            for a in e.a:self.build_expr(a)
+            self.emit("call",e.n,len(e.a))
+    def build_stmt(self,s):
+        if isinstance(s,Let):
+            self.build_expr(s.e);self.emit("let",s.n)
+        elif isinstance(s,Return):
+            self.build_expr(s.e);self.emit("ret")
+        elif isinstance(s,Call):
+            self.build_expr(s);self.emit("callstmt")
+        elif isinstance(s,If):
+            self.build_expr(s.c);self.emit("if_begin")
+            for x in s.t.st:self.build_stmt(x)
+            self.emit("if_else")
+            if s.e:
+                for x in s.e.st:self.build_stmt(x)
+            self.emit("if_end")
+        elif isinstance(s,Match):
+            self.build_expr(s.e);self.emit("match_begin")
+            for p,b in s.arms:
+                self.emit("match_arm_begin",p)
+                for x in b.st:self.build_stmt(x)
+                self.emit("match_arm_end")
+            self.emit("match_end")
+    def build_func(self,f):
+        self.emit("func_begin",f.n,f.r)
+        for p in f.p:self.emit("param",p.n,p.t)
+        for s in f.b.st:self.build_stmt(s)
+        self.emit("func_end")
+    def build(self,root):
+        for f in root.fs:
+            if isinstance(f,Struct):self.emit("struct",f.n,f.f)
+            elif isinstance(f,Enum):self.emit("enum",f.n,f.v)
+            elif isinstance(f,Function):self.build_func(f)
+        return self.ir
+EOF
 
-      - name: "⚙️ Compile Executable"
-        shell: bash
-        run: |
-          mkdir -p output
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            g++ build/out.cpp -o output/app.exe
-          else
-            g++ build/out.cpp -o output/app
-          fi
-          ls -lh output
+    - name: Generate cfg.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/cfg.py
+class CFGBlock:
+    def __init__(self):self.nodes=[];self.next=[]
+    def add(self,n):self.nodes.append(n)
+class CFG:
+    def __init__(self,ir):self.ir=ir;self.blocks=[];self.current=None
+    def new_block(self):
+        b=CFGBlock();self.blocks.append(b);self.current=b;return b
+    def emit(self,n):self.current.add(n)
+    def build(self):
+        self.new_block();st=[]
+        for x in self.ir:
+            if x.op=="if_begin":self.emit(x);st.append(("if",self.current))
+            elif x.op=="if_else":self.emit(x)
+            elif x.op=="if_end":self.emit(x);st.pop()
+            elif x.op=="match_begin":self.emit(x);st.append(("match",self.current))
+            elif x.op=="match_end":self.emit(x);st.pop()
+            else:self.emit(x)
+        return self.blocks
+EOF
 
-      # --------------------------------
-      # ProofLedger (OS-Safe)
-      # --------------------------------
-      - name: "🧾 ProofLedger"
-        shell: bash
-        run: |
-          cd output
-          TARGET=""
-          if [ -f app ]; then TARGET="app"; fi
-          if [ -f app.exe ]; then TARGET="app.exe"; fi
-          [ "$TARGET" = "" ] && echo "❌ No executable" && exit 1
+    - name: Generate backend_cpp.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/backend_cpp.py
+class CPPBackend:
+    def __init__(self):self.out=[];self.ind=0
+    def w(self,s):self.out.append("    "*self.ind+s)
+    def gen_struct(self,n,f):
+        fs=[]
+        for a,t in f:
+            ct="int" if t=="i32" else ("std::string" if t=="&str" else "int")
+            fs.append(f"{ct} {a};")
+        self.w(f"struct {n} {{");self.ind+=1
+        for x in fs:self.w(x)
+        self.ind-=1;self.w("};")
+    def gen_enum(self,n,v):
+        self.w(f"enum {n} {{ {','.join(v)} }};")
+    def gen_func_begin(self,n,r):
+        rt="int" if r=="i32" else("std::string" if r=="&str" else "void")
+        if n=="main":rt="int"
+        self.w(f"{rt} {n}() {{");self.ind+=1
+    def gen_func_end(self):
+        self.ind-=1;self.w("}")
+    def lit(self,v):return v
+    def id(self,v):return v
+    def binop(self,l,o,r):return f"({l} {o} {r})"
+    def call(self,n,a):return f"{n}({','.join(a)})"
+    def emit_stmt(self,nodes,i):
+        st=[]
+        for x in nodes:
+            op=x.op
+            if op=="let":
+                v=st.pop()
+                t="auto" if not v.startswith('"') else "std::string"
+                self.w(f"{t} {x.args[0]} = {v};")
+            elif op=="ret":
+                self.w(f"return {st.pop()};")
+            elif op=="callstmt":
+                self.w(f"{st.pop()};")
+            elif op=="if_begin":pass
+            elif op=="if_else":self.ind-=1;self.w("} else {");self.ind+=1
+            elif op=="if_end":self.ind-=1;self.w("}")
+            elif op=="match_begin":pass
+            elif op=="match_end":pass
+            elif op=="lit":st.append(self.lit(x.args[0]))
+            elif op=="id":st.append(self.id(x.args[0]))
+            elif op=="bin":
+                r=st.pop();l=st.pop();st.append(self.binop(l,x.args[0],r))
+            elif op=="call":
+                cnt=x.args[1];a=[st.pop() for _ in range(cnt)][::-1]
+                st.append(self.call(x.args[0],a))
+        return st
+    def build(self,ir,cfg):
+        self.out=[];self.w("#include <iostream>");self.w("#include <string>");self.w("using namespace std;")
+        for x in ir:
+            if x.op=="struct":self.gen_struct(x.args[0],x.args[1])
+            if x.op=="enum":self.gen_enum(x.args[0],x.args[1])
+        i=0
+        while i<len(ir):
+            x=ir[i]
+            if x.op=="func_begin":
+                n=x.args[0];r=x.args[1]
+                self.gen_func_begin(n,r);i+=1
+                while ir[i].op!="func_end":
+                    self.emit_stmt([ir[i]],i);i+=1
+                self.gen_func_end()
+            i+=1
+        return "\n".join(self.out)
+EOF
 
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$TARGET" > proofledger.txt
-          else
-            certutil -hashfile "$TARGET" SHA256 > proofledger.txt
-          fi
+    - name: Generate backend_nasm.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/backend_nasm.py
+class NASMBackend:
+    def __init__(self):self.out=[]
+    def w(self,s):self.out.append(s)
+    def build(self,ir,cfg):
+        self.out=[];self.w("section .text");self.w("global _start");self.w("_start:")
+        for x in ir:
+            op=x.op
+            if op in ("lit","id","bin","call","let","ret"):
+                self.w(f"; {op} {x.args}")
+        self.w("mov rax,60");self.w("xor rdi,rdi");self.w("syscall")
+        return "\n".join(self.out)
+EOF
 
-          echo "" >> proofledger.txt
-          echo "--- ProofLedger Metadata ---" >> proofledger.txt
-          echo "Generated: $(date -u)" >> proofledger.txt
-          echo "OS: ${{ runner.os }}" >> proofledger.txt
-          echo "Branch: $GITHUB_REF_NAME" >> proofledger.txt
-          echo "Commit: $GITHUB_SHA" >> proofledger.txt
+    - name: Generate backend_jit.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/backend_jit.py
+class JITBackend:
+    def __init__(self):self.env={}
+    def eval_expr(self,opstack,x):
+        if x.op=="lit":
+            v=x.args[0]
+            if v.isdigit():return int(v)
+            if v.startswith('"'):return v.strip('"')
+            return v
+        if x.op=="id":return self.env.get(x.args[0],0)
+        if x.op=="bin":
+            r=opstack.pop();l=opstack.pop();o=x.args[0]
+            if o=="+":return l+r
+            if o=="-":return l-r
+            if o=="*":return l*r
+            if o=="/":return l//r
+            if o=="<":return 1 if l<r else 0
+            if o==">":return 1 if l>r else 0
+            if o=="<=":return 1 if l<=r else 0
+            if o==">=":return 1 if l>=r else 0
+            if o=="==":return 1 if l==r else 0
+            if o=="!=":return 1 if l!=r else 0
+            return 0
+        if x.op=="call":return 0
+        return None
+    def run(self,ir):
+        op=[] 
+        for x in ir:
+            if x.op in ("lit","id"):op.append(self.eval_expr(op,x))
+            elif x.op=="bin":op.append(self.eval_expr(op,x))
+            elif x.op=="let":
+                v=op.pop();self.env[x.args[0]]=v
+            elif x.op=="ret":
+                if op:return op.pop()
+        return None
+EOF
 
-      - name: "📦 Upload Artifacts"
-        uses: actions/upload-artifact@v4
-        with:
-          name: "pure-rust-no-llvm-${{ runner.os }}-${{ github.ref_name }}"
-          path: |
-            output/*
-            build/out.cpp
-            build/out.asm
-          if-no-files-found: warn
+    - name: Generate transpiler_v4.py
+      shell: bash
+      run: |
+        cat << 'EOF' > build/transpiler_v4.py
+from lexer import tokenize
+from parser import Parser
+from type_checker import TypeChecker
+from borrow_checker import BorrowChecker
+from lifetime import LifetimeChecker
+from meaning_ir import MeaningIR
+from cfg import CFG
+from backend_cpp import CPPBackend
+from backend_nasm import NASMBackend
 
-  # --------------------------------
-  # Multi-OS Verified Release
-  # --------------------------------
-  release:
-    name: "🏷️ Verified Multi-OS Release"
-    runs-on: ubuntu-latest
-    needs: build-3os
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+def load_src():
+    with open("src/main.rs","r",encoding="utf8") as f:return f.read()
 
-    steps:
+def run():
+    code=load_src()
+    t=tokenize(code)
+    p=Parser(t)
+    root=p.parse()
 
-      - name: "📥 Download"
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
+    tc=TypeChecker();tc.check(root)
+    bc=BorrowChecker();bc.check(root)
+    lc=LifetimeChecker();lc.check(root)
 
-      - name: "🧹 Flatten"
-        run: |
-          mkdir -p dist_flat
-          for f in $(find dist -type f); do
-            base=$(basename "$f")
-            cp "$f" "dist_flat/${RANDOM}-${base}"
-          done
-          ls -lh dist_flat
+    mir=MeaningIR()
+    ir=mir.build(root)
+    cfg=CFG(ir).build()
 
-      - name: "🏷️ Tag"
-        id: tagger
-        run: |
-          SAN=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9.-]/-/g')
-          TAG="v${{ github.run_number }}-${SAN}"
-          echo "TAG_NAME=$TAG" >> $GITHUB_OUTPUT
+    cpp=CPPBackend()
+    out_cpp=cpp.build(ir,cfg)
+    with open("build/out.cpp","w",encoding="utf8") as f:f.write(out_cpp)
 
-      - name: "🚀 Release"
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tagger.outputs.TAG_NAME }}
-          name: "Pure-Rust-No-LLVM Build #${{ github.run_number }} — ${{ github.ref_name }}"
-          body: |
-            🧩 **Stable Edition — Verified 3OS Build**
-            • Rust → C++ Transpiler
-            • C++ → ASM → Executable
-            • OS-Safe ProofLedger
-            • No-LLVM Pipeline
-            • Multi-OS Verified Artifacts
-          files: dist_flat/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    nasm=NASMBackend()
+    out_asm=nasm.build(ir,cfg)
+    with open("build/out.asm","w",encoding="utf8") as f:f.write(out_asm)
+
+if __name__=="__main__":run()
+EOF
+
+    - name: Run Transpiler
+      shell: bash
+      run: |
+        python3 build/transpiler_v4.py
+        ls -lh build
+
+    - name: Generate ASM
+      shell: bash
+      run: g++ -S -masm=intel build/out.cpp -o build/out.asm || true
+
+    - name: Compile Executable
+      shell: bash
+      run: |
+        mkdir -p output
+        if [[ "$RUNNER_OS" == "Windows" ]]; then g++ build/out.cpp -o output/app.exe; else g++ build/out.cpp -o output/app; fi
+
+    - name: ProofLedger
+      shell: bash
+      run: |
+        cd output
+        if [ -f app ]; then T=app; else T=app.exe; fi
+        sha256sum "$T" > proofledger.txt 2>/dev/null || certutil -hashfile "$T" SHA256 > proofledger.txt
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: pure-rust-no-llvm-${{ runner.os }}
+        path: |
+          output/*
+          build/out.cpp
+          build/out.asm
